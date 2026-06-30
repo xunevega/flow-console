@@ -1737,9 +1737,9 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", initialPubli
               </header>
               <div className="reader-actions">
                 <Button onClick={copyBody}>{copied ? "COPIADO" : publicationMode ? "COPIAR TEXTO" : "COPIAR BORRADOR"}</Button>
+                {selected && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
                 {selectedPrimaryUrl && selectedIsHnMonitor && <a className="button primary" href={selectedPrimaryUrl} target="_blank" rel="noreferrer">ABRIR HN</a>}
                 {selected.canRun && <Button onClick={runWorkflow} disabled={Boolean(busy)}>{workflowRunButtonLabel(selected, busy === "run")}</Button>}
-                {selectedDraftText && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
                 {!selected.trashed && publicationMode && <Button kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICACIÓN HECHA</Button>}
                 {selected.status === "managed" && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { status: "success", archived: false })}>REABRIR</Button>}
                 {!selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: true })}>ARCHIVAR</Button>}
@@ -2311,11 +2311,11 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
             </header>
             <div className="reader-actions">
               <Button onClick={copyBody}>{copied ? "COPIADO" : publicationMode ? "COPIAR TEXTO" : "COPIAR BORRADOR"}</Button>
+              {selected && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
               {selectedPrimaryUrl && selectedIsHnMonitor && <a className="button primary" href={selectedPrimaryUrl} target="_blank" rel="noreferrer">ABRIR HN</a>}
               {selected.canRun && <Button kind={selectedIsHnMonitor ? undefined : "primary"} onClick={runWorkflow} disabled={Boolean(busy)}>{workflowRunButtonLabel(selected, busy === "run")}</Button>}
               {selected.canRetry && <Button kind="warning" onClick={retry} disabled={Boolean(busy)}>{busy === "retry" ? "REINTENTANDO..." : "REINTENTAR"}</Button>}
               {selected.formUrl && <a className="button ghost" href={selected.formUrl} target="_blank" rel="noreferrer">ABRIR FORMULARIO</a>}
-              {selectedDraftText && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
               {!selected.trashed && publicationMode && <Button kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICACIÓN HECHA</Button>}
               {selected.status === "managed" && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { status: "success", archived: false })}>REABRIR</Button>}
               {!selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: true })}>ARCHIVAR</Button>}
