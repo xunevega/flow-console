@@ -595,9 +595,6 @@ const DEFAULT_REPEAT_COUNT = 12;
 const GENERIC_TASK_PROJECT = "__generic_task__";
 const STATS_TEMPLATE_ROWS = [
   { channel: "GA4 Web", publications: 0, impressions: 0, interactions: 0, clicks: 0 },
-  { channel: "YouTube", publications: 0, impressions: 0, interactions: 0, clicks: 0 },
-  { channel: "Pinterest", publications: 0, impressions: 0, interactions: 0, clicks: 0 },
-  { channel: "LinkedIn", publications: 0, impressions: 0, interactions: 0, clicks: 0 },
 ];
 const WEEKDAY_LONG = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 function taskTone(status) {
@@ -5887,10 +5884,11 @@ function mergeStatsRowsByChannel(rows = []) {
 }
 
 function campaignStatsChannel(campaign) {
+  const source = normalizeStatsChannelLabel(campaign?.source);
+  if (source) return source;
   const destination = campaignDestinationLabel(campaign?.url);
   const normalizedDestination = normalizeStatsChannelLabel(destination);
-  if (normalizedDestination && normalizedDestination !== destination) return normalizedDestination;
-  return destination || normalizeStatsChannelLabel(campaign?.source);
+  return normalizedDestination || destination;
 }
 
 function statsRowsWithCampaignChannels(rows = [], campaigns = []) {
@@ -5906,9 +5904,25 @@ function statsRowsWithCampaignChannels(rows = [], campaigns = []) {
     .sort((left, right) => String(left.channel || "").localeCompare(String(right.channel || ""), "es", { sensitivity: "base" }));
 }
 
+function configuredStatsChannelKeys(campaigns = []) {
+  return new Set([
+    ...STATS_TEMPLATE_ROWS.map((row) => normalizeStatsChannelLabel(row.channel).toLowerCase()),
+    ...campaigns.map((campaign) => normalizeStatsChannelLabel(campaign.source).toLowerCase()).filter(Boolean),
+  ]);
+}
+
+function isAllowedStatsRow(row = {}, campaigns = []) {
+  const channel = normalizeStatsChannelLabel(row.channel);
+  const key = channel.toLowerCase();
+  if (!key || isStatsImportedDimensionNoise(channel)) return false;
+  if (key === "ga4 web") return true;
+  return configuredStatsChannelKeys(campaigns).has(key);
+}
+
 function statsRowsForMonth(entries, year, month, campaigns = []) {
   const savedRows = mergeStatsRowsByChannel(entries
     .filter((entry) => Number(entry.year) === year && Number(entry.month) === month)
+    .filter((entry) => isAllowedStatsRow(entry, campaigns))
     .filter((entry) => !isStatsImportedDimensionNoise(entry.channel))
     .sort((left, right) => String(left.channel || "").localeCompare(String(right.channel || ""))));
   if (!savedRows.length) return statsRowsWithCampaignChannels(emptyStatsRows(), campaigns);
@@ -6001,6 +6015,41 @@ function campaignDestinationLabel(value) {
   } catch {
     return "destino sin URL";
   }
+}
+
+const CAMPAIGN_SOURCE_ORDER = ["linkedin", "pinterest", "instagram", "youtube", "blog", "google", "facebook", "tiktok", "reddit", "quora", "newsletter", "email"];
+
+function campaignSourceKey(campaign = {}) {
+  return String(campaign.source || "sin-origen").trim().toLowerCase() || "sin-origen";
+}
+
+function campaignSourceLabel(campaignOrSource = {}) {
+  const source = typeof campaignOrSource === "string" ? campaignOrSource : campaignSourceKey(campaignOrSource);
+  const labels = {
+    "sin-origen": "Sin origen",
+    blog: "Blog",
+    email: "Email",
+    facebook: "Facebook",
+    google: "Google",
+    instagram: "Instagram",
+    linkedin: "LinkedIn",
+    newsletter: "Newsletter",
+    pinterest: "Pinterest",
+    quora: "Quora",
+    reddit: "Reddit",
+    tiktok: "TikTok",
+    youtube: "YouTube",
+  };
+  return labels[source] || source.replace(/[-_]+/g, " ");
+}
+
+function campaignSourceSort(left = "", right = "") {
+  const leftIndex = CAMPAIGN_SOURCE_ORDER.indexOf(left);
+  const rightIndex = CAMPAIGN_SOURCE_ORDER.indexOf(right);
+  if (leftIndex >= 0 || rightIndex >= 0) {
+    return (leftIndex >= 0 ? leftIndex : 999) - (rightIndex >= 0 ? rightIndex : 999);
+  }
+  return campaignSourceLabel(left).localeCompare(campaignSourceLabel(right), "es", { sensitivity: "base" });
 }
 
 async function copyText(value) {
@@ -6577,14 +6626,6 @@ function StatsDashboard() {
     selectedYear,
   ])].sort((left, right) => right - left);
 
-  function updateDraftRow(index, field, value) {
-    setDraftRows((current) => current.map((row, rowIndex) =>
-      rowIndex === index
-        ? { ...row, [field]: field === "channel" ? value : cleanStatsInput(value) }
-        : row,
-    ));
-  }
-
   async function saveStats(event) {
     event.preventDefault();
     setSaving(true);
@@ -6610,19 +6651,28 @@ function StatsDashboard() {
   const campaignsBySource = useMemo(() => {
     const groups = new Map();
     campaigns.forEach((campaign) => {
-      const source = campaignDestinationLabel(campaign.url);
-      if (!groups.has(source)) groups.set(source, []);
-      groups.get(source).push(campaign);
+      const sourceKey = campaignSourceKey(campaign);
+      if (!groups.has(sourceKey)) groups.set(sourceKey, []);
+      groups.get(sourceKey).push(campaign);
     });
     return Array.from(groups.entries())
-      .map(([source, items]) => ({ source, items }))
-      .sort((first, second) => first.source.localeCompare(second.source, "es", { sensitivity: "base" }));
+      .map(([source, items]) => ({
+        source,
+        label: campaignSourceLabel(source),
+        items: [...items].sort((left, right) =>
+          campaignDestinationLabel(left.url).localeCompare(campaignDestinationLabel(right.url), "es", { sensitivity: "base" })
+          || String(left.campaign || "").localeCompare(String(right.campaign || ""), "es", { sensitivity: "base" })
+          || String(left.content || "").localeCompare(String(right.content || ""), "es", { sensitivity: "base" })
+        ),
+      }))
+      .sort((first, second) => campaignSourceSort(first.source, second.source));
   }, [campaigns]);
 
   function mergeGa4Rows(rows) {
     setDraftRows((current) => {
       const incoming = mergeStatsRowsByChannel((Array.isArray(rows) ? rows : [])
         .filter((row) => String(row.channel || "").trim())
+        .filter((row) => isAllowedStatsRow(row, campaigns))
         .filter((row) => !isStatsImportedDimensionNoise(row.channel)));
       if (!incoming.length) return current;
       const byChannel = new Map(incoming.map((row) => [normalizeStatsChannelLabel(row.channel).toLowerCase(), row]));
@@ -6836,7 +6886,7 @@ function StatsDashboard() {
               <span className="section-mark" />
               <div>
                 <strong>{MONTHS[selectedMonth - 1]} {selectedYear}</strong>
-                <small>GA4 mide visitas por UTM; aquí solo ajustas métricas externas de redes</small>
+                <small>GA4 mide visitas por UTM; aquí se muestran canales configurados y datos importados</small>
               </div>
               <Button type="button" kind="primary" onClick={importGa4Stats} disabled={importingGa4}>
                 {importingGa4 ? "IMPORTANDO..." : "IMPORTAR GA4"}
@@ -6862,16 +6912,16 @@ function StatsDashboard() {
               </div>
               {draftRows.map((row, index) => (
                 <div className="stats-table-row" key={`${row.channel}-${index}`}>
-                  <input value={row.channel} onChange={(event) => updateDraftRow(index, "channel", event.target.value)} placeholder="Canal" />
-                  <input type="number" min="0" value={row.publications} onChange={(event) => updateDraftRow(index, "publications", event.target.value)} />
-                  <input type="number" min="0" value={row.impressions} onChange={(event) => updateDraftRow(index, "impressions", event.target.value)} />
-                  <input type="number" min="0" value={row.interactions} onChange={(event) => updateDraftRow(index, "interactions", event.target.value)} />
-                  <input type="number" min="0" value={row.clicks} onChange={(event) => updateDraftRow(index, "clicks", event.target.value)} />
+                  <div className="stats-channel-cell">{row.channel}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(row.publications)}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(row.impressions)}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(row.interactions)}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(row.clicks)}</div>
                 </div>
               ))}
             </div>
             <footer className="stats-editor-actions">
-              <span>{loading ? "Cargando datos..." : "Las visitas/clics reales salen de GA4 con enlaces UTM; guarda aquí solo datos manuales que GA4 no sabe."}</span>
+              <span>{loading ? "Cargando datos..." : "Las visitas/clics reales salen de GA4 con enlaces UTM. Los canales no configurados se ocultan para no inventar fuentes."}</span>
               <Button className="primary" disabled={saving}>{saving ? "GUARDANDO..." : "GUARDAR MES"}</Button>
             </footer>
           </form>
@@ -6950,7 +7000,7 @@ function StatsDashboard() {
             </div>
             <div className="campaign-url-history">
               <header>
-                <strong>Campañas guardadas</strong>
+                <strong>Enlaces por origen</strong>
                 <span>{campaigns.length ? `${campaigns.length} enlaces` : "sin enlaces"}</span>
               </header>
               {campaignsBySource.length ? (
@@ -6958,7 +7008,7 @@ function StatsDashboard() {
                   {campaignsBySource.map((group, index) => (
                     <details key={group.source} open={index === 0}>
                       <summary>
-                        <span>{group.source}</span>
+                        <span>{group.label}</span>
                         <b>{group.items.length} enlaces</b>
                       </summary>
                       <div className="campaign-source-items">
@@ -6967,7 +7017,7 @@ function StatsDashboard() {
                             <div>
                               <strong>{campaign.name || campaign.campaign}</strong>
                               <span>Destino: {campaignDestinationLabel(campaign.url)}</span>
-                              <span>Origen UTM: {[campaign.source, campaign.medium, campaign.campaign, campaign.content].filter(Boolean).join(" / ")}</span>
+                              <span>UTM: {[campaign.source, campaign.medium, campaign.campaign, campaign.content].filter(Boolean).join(" / ")}</span>
                             </div>
                             <div className="campaign-url-row-actions">
                               <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); loadCampaignUrl(campaign); }}>RECUPERAR</button>

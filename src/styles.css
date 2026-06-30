@@ -5646,7 +5646,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: rgba(250, 248, 245, 0.62);
   box-shadow: var(--shadow-raised);
 }
-.stats-table-row input {
+.stats-channel-cell,
+.stats-number-cell {
   width: 100%;
   min-width: 0;
   border: 0;
@@ -5658,14 +5659,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   font-size: 12px;
   font-weight: 700;
 }
-.stats-table-row input[type="number"] {
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.stats-table-row input[type="number"]::-webkit-outer-spin-button,
-.stats-table-row input[type="number"]::-webkit-inner-spin-button {
-  margin: 0;
-  -webkit-appearance: none;
+.stats-number-cell {
+  font-variant-numeric: tabular-nums;
 }
 .stats-editor-actions {
   display: flex;
