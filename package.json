@@ -1,0 +1,35 @@
+{
+  "name": "flow-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"node --watch server.mjs\"",
+    "build": "vite build",
+    "start": "node server.mjs",
+    "lint": "eslint src server.mjs",
+    "activate:publications": "node scripts/activate-publications.mjs",
+    "activate:rag": "node scripts/activate-rag.mjs",
+    "setup:rag-db": "node scripts/setup-rag-db.mjs",
+    "youtube:oauth-url": "node scripts/youtube-oauth.mjs url",
+    "youtube:oauth-token": "node scripts/youtube-oauth.mjs token"
+  },
+  "dependencies": {
+    "basic-ftp": "^6.0.1",
+    "express": "^5.1.0",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.21.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "vite": "^7.2.4"
+  }
+}

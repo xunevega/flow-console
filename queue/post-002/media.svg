@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <rect width="1080" height="1080" fill="#f8f6f0"/>
+  <circle cx="285" cy="320" r="120" fill="#ffd7df"/>
+  <circle cx="790" cy="335" r="140" fill="#c7e9ef"/>
+  <circle cx="540" cy="680" r="190" fill="#f5e2a8"/>
+  <text x="150" y="180" font-family="Arial, sans-serif" font-size="70" font-weight="700" fill="#262626">Kawaii Trends</text>
+  <text x="150" y="260" font-family="Arial, sans-serif" font-size="42" fill="#5a5a5a">Junio 2026</text>
+  <text x="210" y="720" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#262626">soft, clean, collectible</text>
+</svg>

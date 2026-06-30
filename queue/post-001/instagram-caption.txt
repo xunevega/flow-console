@@ -1,0 +1,3 @@
+DataImporter v2 ya esta listo: importar, limpiar y revisar datos sin perder una tarde entera en hojas imposibles.
+
+#dataimporter #automatizacion #productividad #n8n

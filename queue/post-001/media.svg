@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <rect width="1080" height="1080" fill="#f4f0ea"/>
+  <rect x="90" y="120" width="900" height="760" rx="28" fill="#ffffff" stroke="#242424" stroke-width="6"/>
+  <text x="140" y="235" font-family="Arial, sans-serif" font-size="66" font-weight="700" fill="#242424">DataImporter v2</text>
+  <text x="140" y="335" font-family="Arial, sans-serif" font-size="40" fill="#555555">Importa. Limpia. Publica.</text>
+  <rect x="140" y="440" width="800" height="92" rx="18" fill="#d9efe6"/>
+  <rect x="140" y="570" width="620" height="92" rx="18" fill="#e8ddfa"/>
+  <rect x="140" y="700" width="720" height="92" rx="18" fill="#f8e2c9"/>
+  <circle cx="880" cy="746" r="58" fill="#242424"/>
+  <path d="M852 746h56M880 718v56" stroke="#ffffff" stroke-width="14" stroke-linecap="round"/>
+</svg>

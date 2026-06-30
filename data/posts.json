@@ -1,0 +1,30 @@
+[
+  {
+    "id": "post-001",
+    "title": "Lanzamiento DataImporter v2",
+    "folder": "queue/post-001",
+    "media": "media.svg",
+    "createdAt": "2026-06-12T09:00:00.000Z",
+    "updatedAt": "2026-06-12T21:16:06.141Z",
+    "channels": {
+      "pinterest": "pending",
+      "instagram": "pending_confirmation",
+      "linkedin": "pending",
+      "blog": "pending"
+    }
+  },
+  {
+    "id": "post-002",
+    "title": "Kawaii Trends Junio",
+    "folder": "queue/post-002",
+    "media": "media.svg",
+    "createdAt": "2026-06-12T10:30:00.000Z",
+    "updatedAt": "2026-06-12T10:30:00.000Z",
+    "channels": {
+      "pinterest": "pending",
+      "instagram": "pending_confirmation",
+      "linkedin": "published",
+      "blog": "pending"
+    }
+  }
+]
