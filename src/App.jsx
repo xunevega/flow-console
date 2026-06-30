@@ -795,6 +795,26 @@ function extractDraftText(body = "") {
     .trim();
 }
 
+function forumPublicationUrl(notice = {}, forum = {}) {
+  const value = `${forum.name || ""} ${forum.detail || ""} ${notice.workflowName || ""} ${notice.channel || ""} ${notice.subject || ""}`.toLowerCase();
+  const explicitForm = String(notice.formUrl || "").trim();
+  if (explicitForm) return explicitForm;
+  if (/hacker|hn|ycombinator/.test(value)) return "https://news.ycombinator.com/submit";
+  if (/indie\s*hackers|indiehackers/.test(value)) return "https://www.indiehackers.com/new-post";
+  if (/reddit/.test(value)) return "https://www.reddit.com/submit";
+  if (/quora/.test(value)) return "https://www.quora.com/";
+  return notice.urls?.find((url) => !/api|webhook|localhost/i.test(url)) || "";
+}
+
+function forumPublicationLabel(notice = {}, forum = {}) {
+  const value = `${forum.name || ""} ${forum.detail || ""} ${notice.workflowName || ""}`.toLowerCase();
+  if (/hacker|hn|ycombinator/.test(value)) return "ABRIR HACKER NEWS";
+  if (/indie\s*hackers|indiehackers/.test(value)) return "ABRIR INDIE HACKERS";
+  if (/reddit/.test(value)) return "ABRIR REDDIT";
+  if (/quora/.test(value)) return "ABRIR QUORA";
+  return "ABRIR FORO";
+}
+
 function formatStatsNumber(value) {
   return Number(value || 0).toLocaleString("es-ES");
 }
@@ -1406,6 +1426,19 @@ function noticeIsForum(notice = {}) {
   return FORUM_WORKFLOW_PATTERN.test(`${notice.workflowName || ""} ${notice.channel || ""} ${notice.subject || ""}`);
 }
 
+function noticeIsPublicationNotice(notice = {}) {
+  const text = [
+    notice.workflowName,
+    notice.channel,
+    notice.subject,
+    notice.preview,
+    notice.body,
+  ].join(" ").toLowerCase();
+  const hasPublicationIntent = /\b(publicar|publicaci[oó]n|postear|post|borrador|copy|caption|contenido)\b/i.test(text);
+  const hasDestination = /\b(instagram|pinterest|linkedin|youtube|tiktok|blog|hacker\s*news|hn|indie\s*hackers|reddit|quora|foro|forum)\b/i.test(text);
+  return hasPublicationIntent && hasDestination;
+}
+
 function realKarmaFromForumNotices(notices = []) {
   const candidates = [];
   const metricPattern = /\b(karma\s+(?:real|total)|(?:real|total)\s+karma|real\s+total|karma|points?|puntos?|upvotes?|votos?|likes?)\b\s*(?:actual|total|real)?\s*[:=]?\s*([0-9][0-9.,]*)\s*(?!\/\s*10)/gi;
@@ -1465,7 +1498,7 @@ function forumPromoOpportunity(forum, karma, realKarma = null) {
   };
 }
 
-function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onReload, onSaveForum }) {
+function ForumNoticeManager({ forum, notices, initialNoticeId = "", initialPublicationMode = false, onBack, onReload, onSaveForum }) {
   const [folder, setFolder] = useState("inbox");
   const [selectedId, setSelectedId] = useState(initialNoticeId || "");
   const [search, setSearch] = useState("");
@@ -1475,6 +1508,8 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [copied, setCopied] = useState(false);
+  const [publicationMode, setPublicationMode] = useState(false);
+  const [publicationDraft, setPublicationDraft] = useState("");
 
   const forumNotices = useMemo(() => notices.filter((notice) => notice.workflowId === forum.workflowId), [forum.workflowId, notices]);
   const folderNotices = useMemo(() => forumNotices.filter((notice) => {
@@ -1499,6 +1534,9 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
   const promoOpportunity = forumPromoOpportunity(forum, karma, visibleRealKarma);
   const selectedPrimaryUrl = selected?.urls?.[0] || "";
   const selectedIsHnMonitor = selected?.workflowId === "hnDataImporterMonitor" || /hn|hacker/i.test(selected?.workflowName || "");
+  const selectedPublicationUrl = selected ? forumPublicationUrl(selected, forum) : "";
+  const selectedPublicationLabel = selected ? forumPublicationLabel(selected, forum) : "ABRIR FORO";
+  const selectedDraftText = selected ? extractDraftText(selected.body) : "";
   const folderCounts = {
     inbox: forumNotices.filter((notice) => !notice.archived && !notice.trashed && notice.status !== "managed").length,
     executed: forumNotices.filter((notice) => notice.status === "managed" && !notice.archived && !notice.trashed).length,
@@ -1524,6 +1562,14 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
       notice.id === current || (notice.groupedNoticeIds || []).includes(current)
     ) ? current : visibleNotices[0]?.id || "");
   }, [visibleNotices]);
+
+  useEffect(() => {
+    const selectedMatchesInitial = selected && (
+      selected.id === initialNoticeId || (selected.groupedNoticeIds || []).includes(initialNoticeId)
+    );
+    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesInitial));
+    setPublicationDraft(selectedDraftText);
+  }, [initialNoticeId, initialPublicationMode, selected?.id, selectedDraftText]);
 
   async function patchNoticeGroup(notice, patch) {
     const ids = notice?.groupedNoticeIds?.length ? notice.groupedNoticeIds : [notice?.id].filter(Boolean);
@@ -1573,9 +1619,15 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
 
   async function copyBody() {
     if (!selected) return;
-    await navigator.clipboard.writeText(extractDraftText(selected.body));
+    await navigator.clipboard.writeText(publicationMode ? publicationDraft : extractDraftText(selected.body));
     setCopied(true);
     setTimeout(() => setCopied(false), 1400);
+  }
+
+  function openPublicationPrep() {
+    if (!selected) return;
+    setPublicationDraft(extractDraftText(selected.body));
+    setPublicationMode(true);
   }
 
   async function copyPromoDraft() {
@@ -1684,10 +1736,11 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
                 <span className={`reader-status ${statusTone(selected.status)}`}>{executionStatusLabel(selected.status)}</span>
               </header>
               <div className="reader-actions">
-                <Button onClick={copyBody}>{copied ? "COPIADO" : "COPIAR BORRADOR"}</Button>
+                <Button onClick={copyBody}>{copied ? "COPIADO" : publicationMode ? "COPIAR TEXTO" : "COPIAR BORRADOR"}</Button>
                 {selectedPrimaryUrl && selectedIsHnMonitor && <a className="button primary" href={selectedPrimaryUrl} target="_blank" rel="noreferrer">ABRIR HN</a>}
                 {selected.canRun && <Button onClick={runWorkflow} disabled={Boolean(busy)}>{workflowRunButtonLabel(selected, busy === "run")}</Button>}
-                {selected.status !== "managed" && !selected.trashed && <Button kind="primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>HECHO</Button>}
+                {selectedDraftText && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
+                {!selected.trashed && publicationMode && <Button kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICACIÓN HECHA</Button>}
                 {selected.status === "managed" && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { status: "success", archived: false })}>REABRIR</Button>}
                 {!selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: true })}>ARCHIVAR</Button>}
                 {selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: false })}>MOVER A ABIERTOS</Button>}
@@ -1701,7 +1754,29 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
                 </div>
               )}
               {selected.canRun && <p className="reader-action-hint">{workflowRunHint(selected)}</p>}
-              <div className="forum-reader-body">{selected.body}</div>
+              {publicationMode ? (
+                <section className="forum-publication-panel">
+                  <header>
+                    <div>
+                      <strong>Pantalla de publicación</strong>
+                      <span>Edita el borrador, copia el texto y abre el foro para publicarlo manualmente.</span>
+                    </div>
+                    <Button type="button" onClick={() => setPublicationMode(false)}>VOLVER AL AVISO</Button>
+                  </header>
+                  <textarea
+                    value={publicationDraft}
+                    onChange={(event) => setPublicationDraft(event.target.value)}
+                    aria-label="Borrador editable para publicar"
+                  />
+                  <footer>
+                    <Button type="button" onClick={copyBody}>{copied ? "COPIADO" : "COPIAR TEXTO"}</Button>
+                    {selectedPublicationUrl && <a className="button primary publish-primary" href={selectedPublicationUrl} target="_blank" rel="noreferrer">{selectedPublicationLabel}</a>}
+                    <Button type="button" kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICADO</Button>
+                  </footer>
+                </section>
+              ) : (
+                <div className="forum-reader-body">{selected.body}</div>
+              )}
               {selected.urls.length > 0 && (
                 <footer className="reader-links">
                   {selected.urls.map((url, index) => (
@@ -1719,7 +1794,7 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", onBack, onRe
   );
 }
 
-function ForumHub({ initialWorkflowId = "", initialNoticeId = "" }) {
+function ForumHub({ initialWorkflowId = "", initialNoticeId = "", initialPublicationMode = false }) {
   const [notices, setNotices] = useState([]);
   const [workflows, setWorkflows] = useState([]);
   const [selectedForumId, setSelectedForumId] = useState(initialWorkflowId);
@@ -1857,6 +1932,7 @@ function ForumHub({ initialWorkflowId = "", initialNoticeId = "" }) {
         forum={selectedForum}
         notices={notices}
         initialNoticeId={initialNoticeId}
+        initialPublicationMode={initialPublicationMode}
         onBack={() => setSelectedForumId("")}
         onReload={load}
         onSaveForum={saveForumConfig}
@@ -1924,7 +2000,7 @@ function ForumHub({ initialWorkflowId = "", initialNoticeId = "" }) {
   );
 }
 
-function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "" }) {
+function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "", initialPublicationMode = false }) {
   const [notices, setNotices] = useState([]);
   const [workflows, setWorkflows] = useState([]);
   const [folder, setFolder] = useState("inbox");
@@ -1936,6 +2012,8 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [copied, setCopied] = useState(false);
+  const [publicationMode, setPublicationMode] = useState(false);
+  const [publicationDraft, setPublicationDraft] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2006,6 +2084,15 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
   const selected = visibleNotices.find((notice) =>
     notice.id === selectedId || (notice.groupedNoticeIds || []).includes(selectedId)
   ) || null;
+  const selectedDraftText = selected ? extractDraftText(selected.body) : "";
+
+  useEffect(() => {
+    const selectedMatchesInitial = selected && (
+      selected.id === selectedNoticeId || (selected.groupedNoticeIds || []).includes(selectedNoticeId)
+    );
+    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesInitial));
+    setPublicationDraft(selectedDraftText);
+  }, [initialPublicationMode, selected?.id, selectedDraftText, selectedNoticeId]);
 
   async function patchNoticeGroup(notice, patch) {
     const ids = notice?.groupedNoticeIds?.length ? notice.groupedNoticeIds : [notice?.id].filter(Boolean);
@@ -2074,9 +2161,15 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
 
   async function copyBody() {
     if (!selected) return;
-    await navigator.clipboard.writeText(extractDraftText(selected.body));
+    await navigator.clipboard.writeText(publicationMode ? publicationDraft : extractDraftText(selected.body));
     setCopied(true);
     setTimeout(() => setCopied(false), 1400);
+  }
+
+  function openPublicationPrep() {
+    if (!selected) return;
+    setPublicationDraft(extractDraftText(selected.body));
+    setPublicationMode(true);
   }
 
   const folderCounts = {
@@ -2089,6 +2182,8 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
   const selectedIsHnMonitor = selected?.workflowId === "hnDataImporterMonitor";
   const selectedPrimaryUrl = selected?.urls?.[0] || "";
   const selectedDestinationIssue = selected ? noticeDestinationIssue(selected) : null;
+  const selectedPublicationUrl = selected ? forumPublicationUrl(selected) : "";
+  const selectedPublicationLabel = selected ? forumPublicationLabel(selected) : "ABRIR FORO";
 
   return (
     <main className="inbox-workspace">
@@ -2215,12 +2310,13 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
               <span className={`reader-status ${statusTone(selected.status)}`}>{executionStatusLabel(selected.status)}</span>
             </header>
             <div className="reader-actions">
-              <Button onClick={copyBody}>{copied ? "COPIADO" : "COPIAR BORRADOR"}</Button>
+              <Button onClick={copyBody}>{copied ? "COPIADO" : publicationMode ? "COPIAR TEXTO" : "COPIAR BORRADOR"}</Button>
               {selectedPrimaryUrl && selectedIsHnMonitor && <a className="button primary" href={selectedPrimaryUrl} target="_blank" rel="noreferrer">ABRIR HN</a>}
               {selected.canRun && <Button kind={selectedIsHnMonitor ? undefined : "primary"} onClick={runWorkflow} disabled={Boolean(busy)}>{workflowRunButtonLabel(selected, busy === "run")}</Button>}
               {selected.canRetry && <Button kind="warning" onClick={retry} disabled={Boolean(busy)}>{busy === "retry" ? "REINTENTANDO..." : "REINTENTAR"}</Button>}
               {selected.formUrl && <a className="button ghost" href={selected.formUrl} target="_blank" rel="noreferrer">ABRIR FORMULARIO</a>}
-              {selected.status !== "managed" && !selected.trashed && <Button kind="primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>HECHO</Button>}
+              {selectedDraftText && !selected.trashed && !publicationMode && <Button kind="primary" className="publish-primary" onClick={openPublicationPrep}>PREPARAR PUBLICACIÓN</Button>}
+              {!selected.trashed && publicationMode && <Button kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICACIÓN HECHA</Button>}
               {selected.status === "managed" && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { status: "success", archived: false })}>REABRIR</Button>}
               {!selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: true })}>ARCHIVAR</Button>}
               {selected.archived && !selected.trashed && <Button onClick={() => patchNoticeGroup(selected, { archived: false })}>MOVER A ENTRADA</Button>}
@@ -2240,7 +2336,29 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
                 <span>{selectedDestinationIssue.detail}</span>
               </div>
             )}
-            <article className="reader-content">{selected.body}</article>
+            {publicationMode ? (
+              <section className="forum-publication-panel inbox-publication-panel">
+                <header>
+                  <div>
+                    <strong>Pantalla de publicación</strong>
+                    <span>Edita el borrador, copia el texto y abre el foro para publicarlo manualmente.</span>
+                  </div>
+                  <Button type="button" onClick={() => setPublicationMode(false)}>VOLVER AL AVISO</Button>
+                </header>
+                <textarea
+                  value={publicationDraft}
+                  onChange={(event) => setPublicationDraft(event.target.value)}
+                  aria-label="Borrador editable para publicar"
+                />
+                <footer>
+                  <Button type="button" onClick={copyBody}>{copied ? "COPIADO" : "COPIAR TEXTO"}</Button>
+                  {selectedPublicationUrl && <a className="button primary publish-primary" href={selectedPublicationUrl} target="_blank" rel="noreferrer">{selectedPublicationLabel}</a>}
+                  <Button type="button" kind="primary" className="done-primary" onClick={() => patchNoticeGroup(selected, { status: "managed", read: true, archived: false })}>PUBLICADO</Button>
+                </footer>
+              </section>
+            ) : (
+              <article className="reader-content">{selected.body}</article>
+            )}
             {selected.urls.length > 0 && (
               <footer className="reader-links">
                 {selected.urls.map((url, index) => (
@@ -2257,7 +2375,7 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
   );
 }
 
-function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram, onOpenInbox, onOpenForumNotice, onOpenPublicationTarget, onOpenStats }) {
+function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkflow, onOpenInstagram, onOpenInbox, onOpenForumNotice, onOpenPublicationTarget, onOpenStats }) {
   const today = useMemo(() => new Date(), []);
   const dayPanelRef = useRef(null);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
@@ -2319,6 +2437,15 @@ function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram
     load();
   }, [load, refreshToken]);
 
+  useEffect(() => {
+    if (!focusDateKey) return;
+    const focusedDate = new Date(`${focusDateKey}T12:00:00`);
+    if (Number.isNaN(focusedDate.getTime())) return;
+    setCursor(new Date(focusedDate.getFullYear(), focusedDate.getMonth(), 1));
+    setSelectedDate(focusedDate);
+    setScrollToDay(true);
+  }, [focusDateKey]);
+
   const realEvents = useMemo(() => {
     const workflowEvents = workflows
       .filter((workflow) => workflow.lastExecution?.startedAt)
@@ -2330,6 +2457,7 @@ function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram
         );
         if (matchingNotice) {
           const forumNotice = noticeIsForum(matchingNotice) || workflowIsForum(workflow, [matchingNotice]);
+          const publicationNotice = noticeIsPublicationNotice(matchingNotice);
           return {
             id: `notice:${matchingNotice.id}`,
             date: matchingNotice.startedAt || workflow.lastExecution.startedAt,
@@ -2339,8 +2467,10 @@ function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram
             source: "inbox",
             kind: "Aviso",
             signalStatus: ["managed", "ignored"].includes(matchingNotice.status) ? matchingNotice.status : undefined,
-            actionLabel: forumNotice ? "Abrir foro" : "Abrir bandeja",
-            action: () => forumNotice ? onOpenForumNotice(matchingNotice.workflowId, matchingNotice.id) : onOpenInbox(matchingNotice.id),
+            actionLabel: publicationNotice ? "Ir a publicar" : forumNotice ? "Abrir foro" : "Abrir bandeja",
+            action: () => forumNotice
+              ? onOpenForumNotice(matchingNotice.workflowId, matchingNotice.id, { publicationMode: publicationNotice })
+              : onOpenInbox(matchingNotice.id, { publicationMode: publicationNotice }),
           };
         }
         if (statusTone(workflow.lastExecution.status) !== "error") return null;
@@ -2362,6 +2492,7 @@ function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram
     const noticeEvents = groupNoticeList(notices.filter((notice) => !notice.archived && !notice.trashed))
       .map((notice) => {
         const forumNotice = noticeIsForum(notice);
+        const publicationNotice = noticeIsPublicationNotice(notice);
         return {
           id: `notice:${notice.id}`,
           date: notice.startedAt,
@@ -2375,8 +2506,10 @@ function Calendar({ workflows, refreshToken = 0, onOpenWorkflow, onOpenInstagram
           noticeIds: notice.groupedNoticeIds || [notice.id],
           groupCount: notice.groupCount || 1,
           signalStatus: ["managed", "ignored"].includes(notice.status) ? notice.status : undefined,
-          actionLabel: forumNotice ? "Abrir foro" : "Abrir bandeja",
-          action: () => forumNotice ? onOpenForumNotice(notice.workflowId, notice.id) : onOpenInbox(notice.id),
+          actionLabel: publicationNotice ? "Ir a publicar" : forumNotice ? "Abrir foro" : "Abrir bandeja",
+          action: () => forumNotice
+            ? onOpenForumNotice(notice.workflowId, notice.id, { publicationMode: publicationNotice })
+            : onOpenInbox(notice.id, { publicationMode: publicationNotice }),
         };
       });
 
@@ -4784,7 +4917,7 @@ function LearningPreview({ title = "Qué aprende", signals = [], empty = "Sin se
 }
 
 
-function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSaved, initialForumWorkflowId = "", initialForumNoticeId = "" }) {
+function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSaved, initialForumWorkflowId = "", initialForumNoticeId = "", initialForumPublicationMode = false }) {
   const [caption, setCaption] = useState("");
   const [captionHtml, setCaptionHtml] = useState("");
   const [imageUrl, setImageUrl] = useState("");
@@ -5421,7 +5554,11 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
             </div>
           </section>
         ) : publisherScreen === "forums" ? (
-          <ForumHub initialWorkflowId={initialForumWorkflowId} initialNoticeId={initialForumNoticeId} />
+          <ForumHub
+            initialWorkflowId={initialForumWorkflowId}
+            initialNoticeId={initialForumNoticeId}
+            initialPublicationMode={initialForumPublicationMode}
+          />
         ) : (
           <div className="publication-editor-layout">
             <section className="publication-editor-generator">
@@ -6958,8 +7095,10 @@ export default function App() {
 		  const [groupConfig, setGroupConfig] = useState({ groups: [], assignments: {} });
 		  const [groupModal, setGroupModal] = useState(undefined);
 		  const [instagramDraft, setInstagramDraft] = useState(null);
+  const [calendarFocusDateKey, setCalendarFocusDateKey] = useState("");
   const [managementContext, setManagementContext] = useState(null);
-  const [publicationForumContext, setPublicationForumContext] = useState({ workflowId: "", noticeId: "" });
+  const [publicationForumContext, setPublicationForumContext] = useState({ workflowId: "", noticeId: "", publicationMode: false });
+  const [inboxPublicationMode, setInboxPublicationMode] = useState(false);
 
   const saveGroups = useCallback(async (next) => {
     const saved = await api("/groups", { method: "PUT", body: JSON.stringify(next) });
@@ -7072,13 +7211,16 @@ export default function App() {
   const openPublication = useCallback((post = null) => {
     if (post) {
       setInstagramDraft({ ...post, source: "publication", updatedAt: Date.now() });
+      const sourceDate = post.scheduledAt || post.publishedAt || post.createdAt || "";
+      if (sourceDate) setCalendarFocusDateKey(dateKey(new Date(sourceDate)));
     }
-    setPublicationForumContext({ workflowId: "", noticeId: "" });
+    setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
     navigate("instagram");
   }, [navigate]);
 
   const openPublicationTarget = useCallback((targetId, task = null) => {
-    setPublicationForumContext({ workflowId: "", noticeId: "" });
+    if (task?.dueDate) setCalendarFocusDateKey(task.dueDate);
+    setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
     setInstagramDraft({
       source: "publication",
       targetId,
@@ -7112,15 +7254,20 @@ export default function App() {
     navigate("calendar");
   }, [managementContext, navigate]);
 
-	  const openInbox = useCallback((noticeId = "") => {
+	  const openInbox = useCallback((noticeId = "", options = {}) => {
 	    setInboxSelectedNoticeId(String(noticeId || ""));
 	    setInboxSelectedWorkflowId("");
+	    setInboxPublicationMode(Boolean(options.publicationMode));
 	    navigate("inbox");
 	    setInboxRefresh((current) => current + 1);
 	  }, [navigate]);
 
-  const openForumNotice = useCallback((workflowId = "", noticeId = "") => {
-    setPublicationForumContext({ workflowId: String(workflowId || ""), noticeId: String(noticeId || "") });
+  const openForumNotice = useCallback((workflowId = "", noticeId = "", options = {}) => {
+    setPublicationForumContext({
+      workflowId: String(workflowId || ""),
+      noticeId: String(noticeId || ""),
+      publicationMode: Boolean(options.publicationMode),
+    });
     setInstagramDraft(null);
     navigate("instagram");
   }, [navigate]);
@@ -7171,7 +7318,7 @@ export default function App() {
           <button
             className={view === "instagram" ? "active" : ""}
             onClick={() => {
-              setPublicationForumContext({ workflowId: "", noticeId: "" });
+              setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
               navigate("instagram");
             }}
           >
@@ -7201,6 +7348,7 @@ export default function App() {
         <Calendar
           workflows={workflows}
           refreshToken={calendarRefresh}
+          focusDateKey={calendarFocusDateKey}
           onOpenWorkflow={openWorkflow}
           onOpenInstagram={openPublication}
           onOpenInbox={openInbox}
@@ -7211,7 +7359,12 @@ export default function App() {
 	      ) : view === "notebook" ? (
 		        <NotesNotebook />
       ) : view === "inbox" ? (
-        <Inbox refreshToken={inboxRefresh} selectedNoticeId={inboxSelectedNoticeId} selectedWorkflowId={inboxSelectedWorkflowId} />
+        <Inbox
+          refreshToken={inboxRefresh}
+          selectedNoticeId={inboxSelectedNoticeId}
+          selectedWorkflowId={inboxSelectedWorkflowId}
+          initialPublicationMode={inboxPublicationMode}
+        />
       ) : view === "management" ? (
         <main className="workspace">
 	          <WorkflowList
@@ -7242,6 +7395,7 @@ export default function App() {
           onPublicationSaved={() => setCalendarRefresh((current) => current + 1)}
           initialForumWorkflowId={publicationForumContext.workflowId}
           initialForumNoticeId={publicationForumContext.noticeId}
+          initialForumPublicationMode={publicationForumContext.publicationMode}
         />
       ) : view === "stats" ? (
         <StatsDashboard />
@@ -7249,6 +7403,7 @@ export default function App() {
         <Calendar
           workflows={workflows}
           refreshToken={calendarRefresh}
+          focusDateKey={calendarFocusDateKey}
           onOpenWorkflow={openWorkflow}
           onOpenInstagram={openPublication}
           onOpenInbox={openInbox}
