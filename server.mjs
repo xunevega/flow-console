@@ -59,6 +59,7 @@ const googleAdsConfig = {
   customerId: String(process.env.GOOGLE_ADS_CUSTOMER_ID || "").trim(),
   loginCustomerId: String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || "").trim(),
 };
+const googleMapsApiKey = String(process.env.GOOGLE_MAPS_API_KEY || "").trim();
 const ftpHost = String(process.env.FTP_HOST || "").trim();
 const ftpPort = Number(process.env.FTP_PORT || 21);
 const ftpUser = String(process.env.FTP_USER || "").trim();
@@ -225,6 +226,42 @@ function requireInternalRag(req, res, next) {
     return res.status(401).json({ error: "No autorizado" });
   }
   next();
+}
+
+function parseDurationSeconds(value) {
+  const match = String(value || "").match(/^(\d+(?:\.\d+)?)s$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function routeWaypointFromInput(value) {
+  const text = String(value || "").trim();
+  const latLngMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (latLngMatch) {
+    return {
+      location: {
+        latLng: {
+          latitude: Number(latLngMatch[1]),
+          longitude: Number(latLngMatch[2]),
+        },
+      },
+    };
+  }
+  if (/^place_id:/i.test(text)) return { placeId: text.replace(/^place_id:/i, "").trim() };
+  return { address: text };
+}
+
+function tollAmountFromRoute(route) {
+  const prices = Array.isArray(route?.travelAdvisory?.tollInfo?.estimatedPrice)
+    ? route.travelAdvisory.tollInfo.estimatedPrice
+    : [];
+  const first = prices[0];
+  if (!first) return { tollAmount: 0, tollCurrency: "EUR" };
+  const units = Number(first.units || 0);
+  const nanos = Number(first.nanos || 0);
+  return {
+    tollAmount: units + (nanos / 1_000_000_000),
+    tollCurrency: String(first.currencyCode || "EUR"),
+  };
 }
 
 function oauthState() {
@@ -4292,6 +4329,106 @@ app.post("/api/logout", (_, res) => {
     `flow_console_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production ? "; Secure" : ""}`,
   );
   res.json({ ok: true });
+});
+
+app.post("/api/routes/compare", requireAuth, async (req, res) => {
+  const origin = String(req.body?.origin || "").trim();
+  const destination = String(req.body?.destination || "").trim();
+  const alternatives = Math.max(1, Math.min(3, Number(req.body?.alternatives || 3)));
+  if (!origin || !destination) {
+    return res.status(400).json({ error: "Faltan origin y destination" });
+  }
+  if (!googleMapsApiKey) {
+    return res.status(503).json({ error: "Falta GOOGLE_MAPS_API_KEY en el servidor" });
+  }
+  try {
+    const response = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": googleMapsApiKey,
+        "X-Goog-FieldMask": [
+          "routes.duration",
+          "routes.distanceMeters",
+          "routes.polyline.encodedPolyline",
+          "routes.travelAdvisory.tollInfo.estimatedPrice",
+          "routes.routeLabels",
+        ].join(","),
+      },
+      body: JSON.stringify({
+        origin: routeWaypointFromInput(origin),
+        destination: routeWaypointFromInput(destination),
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_AWARE",
+        languageCode: "es-ES",
+        units: "METRIC",
+        extraComputations: ["TOLLS"],
+        computeAlternativeRoutes: alternatives > 1,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = String(payload?.error?.message || payload?.message || "Google Routes API no respondió correctamente");
+      return res.status(502).json({ error: message });
+    }
+    const routes = Array.isArray(payload.routes) ? payload.routes.slice(0, alternatives) : [];
+    return res.json({
+      ok: true,
+      routes: routes.map((route, index) => {
+        const toll = tollAmountFromRoute(route);
+        return {
+          id: `r${index + 1}`,
+          duration: route.duration || "0s",
+          durationSeconds: parseDurationSeconds(route.duration),
+          distanceMeters: Number(route.distanceMeters || 0),
+          tollAmount: toll.tollAmount,
+          tollCurrency: toll.tollCurrency,
+          polyline: String(route?.polyline?.encodedPolyline || ""),
+          labels: Array.isArray(route.routeLabels) ? route.routeLabels : [],
+        };
+      }),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: String(error.message || "No se pudo calcular la ruta") });
+  }
+});
+
+app.get("/api/routes/autocomplete", requireAuth, async (req, res) => {
+  const query = String(req.query?.q || "").trim();
+  if (query.length < 3) return res.json({ ok: true, suggestions: [] });
+  if (!googleMapsApiKey) {
+    return res.status(503).json({ error: "Falta GOOGLE_MAPS_API_KEY en el servidor" });
+  }
+  try {
+    const params = new URLSearchParams({
+      input: query,
+      key: googleMapsApiKey,
+      language: "es",
+      types: "geocode",
+    });
+    const response = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(15000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.status === "REQUEST_DENIED") {
+      const message = String(payload?.error_message || payload?.status || "No se pudo autocompletar direcciones");
+      return res.status(502).json({ error: message });
+    }
+    const predictions = Array.isArray(payload.predictions) ? payload.predictions : [];
+    return res.json({
+      ok: true,
+      suggestions: predictions.slice(0, 6).map((item) => ({
+        placeId: String(item.place_id || ""),
+        description: String(item.description || ""),
+        mainText: String(item?.structured_formatting?.main_text || ""),
+        secondaryText: String(item?.structured_formatting?.secondary_text || ""),
+      })).filter((item) => item.placeId && item.description),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: String(error.message || "No se pudo autocompletar direcciones") });
+  }
 });
 
 app.get("/api/oauth/youtube/url", requireAuth, (req, res) => {

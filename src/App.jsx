@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import PersonalRouter from "./PersonalRouter.jsx";
 
 const GROUP_COLORS = ["#4a7ab5", "#4a9e7a", "#7a60a8", "#c47a3a", "#c45050", "#8c8277"];
 const GENERATOR_OPTIONS = {
@@ -7226,6 +7227,7 @@ export default function App() {
   function syncCurrentView() {
     if (view === "inbox") setInboxRefresh((current) => current + 1);
     else if (view === "calendar") setCalendarRefresh((current) => current + 1);
+    else if (view === "router") return;
     else loadWorkflows();
   }
 
@@ -7386,6 +7388,12 @@ export default function App() {
           >
             ESTADÍSTICAS
           </button>
+          <button
+            className={view === "router" ? "active" : ""}
+            onClick={() => navigate("router")}
+          >
+            ENRUTADOR
+          </button>
         </nav>
         <div className="top-actions">
           <Button onClick={goBack}>ATRÁS</Button>
@@ -7449,6 +7457,8 @@ export default function App() {
         />
       ) : view === "stats" ? (
         <StatsDashboard />
+      ) : view === "router" ? (
+        <PersonalRouter />
       ) : (
         <Calendar
           workflows={workflows}
