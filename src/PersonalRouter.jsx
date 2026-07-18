@@ -45,14 +45,40 @@ function formatToll(amount, currency = "EUR") {
 
 function readCache() {
   try {
-    return JSON.parse(localStorage.getItem(ROUTER_CACHE_KEY) || "{}");
+    const data = JSON.parse(localStorage.getItem(ROUTER_CACHE_KEY) || "{}");
+    // Cleanup: Remove entries older than 24 hours
+    const now = Date.now();
+    const cleaned = Object.entries(data).reduce((acc, [key, entry]) => {
+      if (now - Number(entry.createdAt || 0) < 24 * 60 * 60 * 1000) {
+        acc[key] = entry;
+      }
+      return acc;
+    }, {});
+    if (Object.keys(cleaned).length < Object.keys(data).length) {
+      writeCache(cleaned);
+    }
+    return cleaned;
   } catch {
+    localStorage.removeItem(ROUTER_CACHE_KEY);
     return {};
   }
 }
 
 function writeCache(value) {
-  localStorage.setItem(ROUTER_CACHE_KEY, JSON.stringify(value));
+  try {
+    const json = JSON.stringify(value);
+    // Rough size check: if exceeds ~200KB, trim oldest entries
+    if (json.length > 200 * 1024) {
+      const entries = Object.entries(value).sort((a, b) => Number(b[1].createdAt) - Number(a[1].createdAt));
+      const trimmed = Object.fromEntries(entries.slice(0, Math.floor(entries.length / 2)));
+      localStorage.setItem(ROUTER_CACHE_KEY, JSON.stringify(trimmed));
+    } else {
+      localStorage.setItem(ROUTER_CACHE_KEY, json);
+    }
+  } catch (err) {
+    // Storage quota exceeded or disabled
+    localStorage.removeItem(ROUTER_CACHE_KEY);
+  }
 }
 
 function readUsage() {
@@ -108,7 +134,11 @@ function readDecisionHistory() {
 }
 
 function writeDecisionHistory(items) {
-  localStorage.setItem(ROUTER_HISTORY_KEY, JSON.stringify(items.slice(-ROUTER_MAX_HISTORY_ITEMS)));
+  try {
+    localStorage.setItem(ROUTER_HISTORY_KEY, JSON.stringify(items.slice(-ROUTER_MAX_HISTORY_ITEMS)));
+  } catch (err) {
+    // Storage quota exceeded, silently fail
+  }
 }
 
 function routeCacheKey(origin, destination) {
@@ -317,16 +347,33 @@ export default function PersonalRouter() {
       setError("Indica origen y destino.");
       return;
     }
+    if (cleanOrigin === cleanDestination) {
+      setError("Origen y destino no pueden ser iguales.");
+      return;
+    }
     setError("");
     setLoading(true);
+    const timeoutId = setTimeout(() => {
+      setError("Timeout: La comparación de rutas tardó demasiado. Intenta de nuevo.");
+      setLoading(false);
+    }, 15000); // 15 second timeout
+    
     try {
       const key = routeCacheKey(cleanOrigin, cleanDestination);
       const cache = readCache();
       const entry = cache[key];
       if (entry && Date.now() - Number(entry.createdAt || 0) < ROUTER_CACHE_TTL_MS) {
-        setRoutes(entry.routes || []);
+        const cachedRoutes = entry.routes || [];
+        if (!cachedRoutes.length) {
+          setError("No se encontraron rutas en caché. Intenta de nuevo.");
+          clearTimeout(timeoutId);
+          setLoading(false);
+          return;
+        }
+        setRoutes(cachedRoutes);
         setSelectedRouteId("");
         setSource("cache");
+        clearTimeout(timeoutId);
         return;
       }
       const payload = await api("/routes/compare", {
@@ -346,6 +393,14 @@ export default function PersonalRouter() {
         polyline: String(route.polyline || ""),
         labels: Array.isArray(route.labels) ? route.labels : [],
       }));
+      
+      if (!normalizedRoutes.length) {
+        setError("No se encontraron rutas. Verifica origen y destino.");
+        clearTimeout(timeoutId);
+        setLoading(false);
+        return;
+      }
+      
       setRoutes(normalizedRoutes);
       setSelectedRouteId("");
       cache[key] = { createdAt: Date.now(), routes: normalizedRoutes };
@@ -353,8 +408,16 @@ export default function PersonalRouter() {
       setUsage(bumpUsage());
       setSource("live");
     } catch (compareError) {
-      setError(String(compareError.message || "No se pudo comparar rutas."));
+      const errorMsg = String(compareError.message || "No se pudo comparar rutas.");
+      const userFriendlyMsg = 
+        errorMsg.includes("API key not valid") ? "Error: API key inválida. Contacta al soporte." :
+        errorMsg.includes("INVALID_ARGUMENT") ? "Verifica que origen y destino sean válidos." :
+        errorMsg.includes("PERMISSION_DENIED") ? "Error de permisos. Contacta al soporte." :
+        errorMsg.includes("NOT_FOUND") ? "Ruta no encontrada entre estos puntos." :
+        errorMsg;
+      setError(userFriendlyMsg);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -415,9 +478,10 @@ export default function PersonalRouter() {
         </div>
 
         <form className="router-form" onSubmit={compareRoutes}>
-          <label>
+          <label htmlFor="router-origin">
             Origen
             <input
+              id="router-origin"
               value={origin}
               onChange={(event) => {
                 setOrigin(event.target.value);
@@ -425,19 +489,22 @@ export default function PersonalRouter() {
               }}
               placeholder="Ej.: Gijón"
               autoComplete="off"
+              aria-describedby={originLookupError ? "origin-error" : originPlaceId ? "origin-valid" : undefined}
             />
             {!!originSuggestions.length && (
-              <div className="router-suggestions">
+              <div className="router-suggestions" role="listbox">
                 {originSuggestions.map((item) => (
                   <button
                     key={item.placeId}
                     type="button"
+                    role="option"
                     onClick={() => {
                       setOrigin(item.description);
                       setOriginPlaceId(item.placeId);
                       setOriginSuggestions([]);
                       setOriginLookupError("");
                     }}
+                    aria-label={`${item.mainText || item.description}${item.secondaryText ? `, ${item.secondaryText}` : ""}`}
                   >
                     <strong>{item.mainText || item.description}</strong>
                     {item.secondaryText ? <small>{item.secondaryText}</small> : null}
@@ -445,12 +512,13 @@ export default function PersonalRouter() {
                 ))}
               </div>
             )}
-            {originLookupError && <small className="router-note">{originLookupError}</small>}
-            {originPlaceId && <small className="router-note ok">Origen validado con Place ID</small>}
+            {originLookupError && <small id="origin-error" className="router-note error">{originLookupError}</small>}
+            {originPlaceId && <small id="origin-valid" className="router-note ok">✓ Origen validado</small>}
           </label>
-          <label>
+          <label htmlFor="router-destination">
             Destino
             <input
+              id="router-destination"
               value={destination}
               onChange={(event) => {
                 setDestination(event.target.value);
@@ -458,19 +526,22 @@ export default function PersonalRouter() {
               }}
               placeholder="Ej.: Madrid"
               autoComplete="off"
+              aria-describedby={destinationLookupError ? "destination-error" : destinationPlaceId ? "destination-valid" : undefined}
             />
             {!!destinationSuggestions.length && (
-              <div className="router-suggestions">
+              <div className="router-suggestions" role="listbox">
                 {destinationSuggestions.map((item) => (
                   <button
                     key={item.placeId}
                     type="button"
+                    role="option"
                     onClick={() => {
                       setDestination(item.description);
                       setDestinationPlaceId(item.placeId);
                       setDestinationSuggestions([]);
                       setDestinationLookupError("");
                     }}
+                    aria-label={`${item.mainText || item.description}${item.secondaryText ? `, ${item.secondaryText}` : ""}`}
                   >
                     <strong>{item.mainText || item.description}</strong>
                     {item.secondaryText ? <small>{item.secondaryText}</small> : null}
@@ -478,58 +549,76 @@ export default function PersonalRouter() {
                 ))}
               </div>
             )}
-            {destinationLookupError && <small className="router-note">{destinationLookupError}</small>}
-            {destinationPlaceId && <small className="router-note ok">Destino validado con Place ID</small>}
+            {destinationLookupError && <small id="destination-error" className="router-note error">{destinationLookupError}</small>}
+            {destinationPlaceId && <small id="destination-valid" className="router-note ok">✓ Destino validado</small>}
           </label>
-          <label>
+          <label htmlFor="router-pref">
             ¿Qué pesa más?
-            <select value={timeVsToll} onChange={(event) => setTimeVsToll(event.target.value)}>
+            <select id="router-pref" value={timeVsToll} onChange={(event) => setTimeVsToll(event.target.value)}>
               <option value="time">Ahorrar tiempo</option>
               <option value="toll">Ahorrar peaje</option>
             </select>
           </label>
-          <label>
+          <label htmlFor="router-maxtime">
             Tope extra (min)
             <input
+              id="router-maxtime"
               type="number"
               min="0"
               value={maxExtraMinutes}
               onChange={(event) => setMaxExtraMinutes(event.target.value)}
+              aria-label="Máximo minutos adicionales permitidos"
             />
           </label>
-          <label>
+          <label htmlFor="router-maxtoll">
             Tope peaje (€)
             <input
+              id="router-maxtoll"
               type="number"
               min="0"
               step="0.5"
               value={maxTollEur}
               onChange={(event) => setMaxTollEur(event.target.value)}
+              aria-label="Máximo peaje permitido en euros"
             />
           </label>
-          <label>
+          <label htmlFor="router-maxdist">
             Tope distancia (km)
             <input
+              id="router-maxdist"
               type="number"
               min="0"
               value={maxDistanceKm}
               onChange={(event) => setMaxDistanceKm(event.target.value)}
+              aria-label="Máximo distancia permitida en kilómetros"
             />
           </label>
           <div className="router-actions">
-            <button className="button primary" type="submit" disabled={loading}>
+            <button 
+              className="button primary" 
+              type="submit" 
+              disabled={loading}
+              aria-busy={loading}
+              aria-label={loading ? "Comparando rutas..." : "Comparar rutas"}
+            >
               {loading ? "Comparando..." : "Comparar rutas"}
             </button>
-            <span className={`router-usage ${usage.calls >= ROUTER_DAILY_LIMIT ? "warning" : ""}`}>
+            <span 
+              className={`router-usage ${usage.calls >= ROUTER_DAILY_LIMIT ? "warning" : ""}`}
+              role="status"
+              aria-label={`${usage.calls} de ${ROUTER_DAILY_LIMIT} llamadas en vivo usadas hoy`}
+            >
               {usage.calls}/{ROUTER_DAILY_LIMIT} llamadas live hoy
             </span>
             {source !== "none" && (
-              <span className="router-source">{source === "cache" ? "Resultado desde caché local" : "Resultado en vivo"}</span>
+              <span className="router-source" role="status">
+                {source === "cache" ? "Resultado desde caché local" : "Resultado en vivo"}
+              </span>
             )}
           </div>
         </form>
 
-        {error && <div className="global-error">{error}</div>}
+        {error && <div className="global-error" role="alert" aria-live="assertive">{error}</div>}
 
         {!!scoredRoutes.length && (
           <section className="router-results">
