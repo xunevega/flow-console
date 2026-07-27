@@ -5,7 +5,7 @@
  *   GET    /api/articulos.php?slug=...
  *   PUT    /api/articulos.php?slug=...
  *   PATCH  /api/articulos.php?slug=...
- *   DELETE /api/articulos.php?slug=...
+ * El borrado por DELETE está desactivado.
  *
  * Cabecera: Authorization: Bearer <BLOG_API_TOKEN> o X-Blog-Token.
  */
@@ -63,10 +63,10 @@ try {
     }
 
     if ($method === 'DELETE') {
-        if ($slug === '') salir(422, ['ok' => false, 'error' => 'Falta slug.']);
-        $stmt = db()->prepare('DELETE FROM af_articulos WHERE slug = ?');
-        $stmt->execute([$slug]);
-        salir(200, ['ok' => true, 'deleted' => $stmt->rowCount(), 'slug' => $slug]);
+        salir(405, [
+            'ok' => false,
+            'error' => 'El borrado de artículos está desactivado para evitar eliminaciones accidentales.',
+        ]);
     }
 
     if ($method === 'PUT' || $method === 'PATCH') {
