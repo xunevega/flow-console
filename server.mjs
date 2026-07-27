@@ -174,7 +174,8 @@ app.use((_, res, next) => {
 });
 
 function configured() {
-  return Boolean(n8nUrl && n8nApiKey && consolePassword && sessionSecret);
+  // Session secret is only required when a password is set
+  return Boolean(n8nUrl && n8nApiKey && (!consolePassword || sessionSecret));
 }
 
 function safeEqual(left, right) {
@@ -204,6 +205,7 @@ function readCookies(req) {
 }
 
 function validSession(req) {
+  if (!consolePassword) return true; // Public mode: no password required
   if (!configured()) return false;
   const token = readCookies(req).flow_console_session;
   const [payload, signature] = String(token || "").split(".");
@@ -4294,7 +4296,7 @@ function extractNotices(executions, workflows, state) {
 }
 
 app.get("/api/session", (req, res) => {
-  res.json({ authenticated: validSession(req), configured: configured() });
+  res.json({ authenticated: validSession(req), configured: configured(), authRequired: Boolean(consolePassword) });
 });
 
 function healthcheckResponse(_, res) {

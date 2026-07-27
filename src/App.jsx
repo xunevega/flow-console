@@ -7132,7 +7132,7 @@ function StatsDashboard() {
 }
 
 export default function App() {
-  const [session, setSession] = useState({ loading: true, authenticated: false, configured: false });
+  const [session, setSession] = useState({ loading: true, authenticated: false, configured: false, authRequired: true });
   const [workflows, setWorkflows] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [connection, setConnection] = useState("loading");
@@ -7325,7 +7325,7 @@ export default function App() {
   }, [navigate]);
 
   if (session.loading) return <div className="boot">INICIANDO FLOW CONSOLE...</div>;
-  if (!session.authenticated) {
+  if (!session.authenticated && session.authRequired) {
     return (
       <Login
         configured={session.configured}
@@ -7398,7 +7398,7 @@ export default function App() {
         <div className="top-actions">
           <Button onClick={goBack}>ATRÁS</Button>
           <Button onClick={syncCurrentView}>↺ SYNC</Button>
-          <Button onClick={logout}>SALIR</Button>
+          {session.authRequired && <Button onClick={logout}>SALIR</Button>}
         </div>
       </header>
       {error && <div className="global-error">{error}</div>}
