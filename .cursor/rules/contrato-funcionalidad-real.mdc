@@ -1,0 +1,29 @@
+---
+description: Contrato de funcionalidad real — Flow Console. Siempre. Este producto.
+alwaysApply: true
+---
+
+# Contrato — Flow Console
+
+Fuente: `CONTRATO_FUNCIONALIDAD_REAL.md`. Manda sobre README, chat y copias.
+
+Este workspace es **Flow Console**. No otro producto. Un texto de menú no es otra app. Auditar o hablar de una pantalla como si fuera otro repo incumple el contrato.
+
+## Que cuenta
+
+Solo dato, estado o acción real. Si no funciona, está mal. Si funciona y se puede mejor, se dice. Ningún cableado a ningún sitio.
+
+Una variable de entorno no es una conexión viva. Editorial Brain cuenta si responde y aporta texto, instrucción o memoria usable. Si no aporta, se dice y no se genera fingiendo que ayudó. n8n no se etiqueta como cerebro.
+
+Estados: funcional / parcial (el hueco se ve) / no disponible. No existe “parece que sí”.
+
+## Prohibido
+
+- Montar en la cabeza un componente que `App.jsx` no monta.
+- Prometer Programar, historial o Search Console si el botón no existe o no hace eso.
+- Borrar publicaciones o artículos de blog. No hay DELETE de posts ni de blog en esta consola.
+- Meter en esta consola código de otro producto, o auditarlo como si fuera Flow Console.
+
+## Al cambiar UI o docs
+
+Arreglar o retirar. No dejar “por si acaso”. README = nav real de `App.jsx`.

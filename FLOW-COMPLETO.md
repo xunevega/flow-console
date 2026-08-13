@@ -10,7 +10,7 @@ Abrir Flow Console
 -> Calendario
 ```
 
-Flow Console se abre con sesion privada. Si la sesion no existe, pide clave. Una vez dentro, carga workflows, calendario, publicaciones, bandeja y memoria editorial segun la pantalla.
+Flow Console se abre con sesion privada. Si la sesion no existe, pide clave. Una vez dentro, carga calendario, publicaciones, avisos y memoria editorial segun la pantalla. n8n solo si esta configurado.
 
 ## 2. Calendario
 
@@ -19,7 +19,7 @@ Calendario
 -> ver el dia
 -> ver publicaciones, tareas y señales
 -> abrir detalle
--> actuar: editar, marcar pendiente, gestionar, ignorar o abrir bandeja
+-> actuar: editar, marcar pendiente, gestionar, ignorar o abrir avisos
 ```
 
 El Calendario es el centro diario. Sirve para ver lo que paso o lo que toca hacer en una fecha concreta.
@@ -30,23 +30,23 @@ En Calendario aparecen:
 - tareas manuales
 - programaciones repetidas: cada semana, cada 2 semanas, cada 3 semanas o cada mes
 - señales del dia que vienen de automatizaciones o avisos
-- accesos para abrir Bandeja o Publicaciones cuando toca actuar
+- accesos para abrir Avisos o Publicaciones cuando toca actuar
 
 No es una pantalla de configuracion. Es la agenda operativa.
 
-## 3. Bandeja
+## 3. Avisos
 
 ```text
-Bandeja
+Avisos
 -> revisar avisos de automatizaciones
 -> leer el contenido limpio
 -> abrir enlaces o formularios
 -> archivar, restaurar, papelera o reintentar si aplica
 ```
 
-Bandeja sirve para recibir salidas de workflows: avisos, borradores, errores, enlaces, formularios o resultados que necesitan revision humana.
+Avisos sirve para recibir salidas de workflows: avisos, borradores, errores, enlaces, formularios o resultados que necesitan revision humana.
 
-Lo importante de Bandeja es que centraliza lo que llega del sistema. Si algo falla o genera una senal, aqui es donde se revisa.
+Lo importante de Avisos es que centraliza lo que llega del sistema. Si algo falla o genera una senal, aqui es donde se revisa.
 
 ## 4. Añadir
 
@@ -78,8 +78,8 @@ Publicaciones
 -> elegir canal o generador
 -> preparar texto, imagen o video
 -> diagnostico previo
--> publicar, preparar o guardar
--> guardar historial
+-> publicar, preparar, programar o confirmar
+-> ver historial (sin borrar posts)
 ```
 
 Publicaciones es la salida real de contenido. Aqui se decide canal, formato, modo y accion.
@@ -125,8 +125,11 @@ Fuentes que usa:
 
 ## 7. Automatizaciones
 
+No hay item de menu. Se abren desde Calendario.
+
 ```text
-Automatizaciones
+Calendario
+-> tarea de workflow
 -> ver workflows de n8n
 -> ver estado activo/inactivo
 -> ver ejecuciones recientes
@@ -135,9 +138,7 @@ Automatizaciones
 -> abrir n8n
 ```
 
-Automatizaciones es la zona tecnica. Sirve para gestionar n8n sin entrar siempre en n8n.
-
-Aqui tienen sentido los errores de workflows. Si algo falla en una automatizacion, se revisa aqui o desde Bandeja/Calendario si ha generado una senal.
+Si algo falla en una automatizacion, se revisa aqui o desde Avisos/Calendario si ha generado una senal.
 
 ## 8. Estadisticas
 
@@ -159,7 +160,7 @@ Usalo para:
 - revisar meses fuertes y meses flojos
 - ver tendencias de impresiones, interacciones y clics
 
-Los datos son editables. Si mas adelante se conectan APIs de analytics, esta misma pantalla puede alimentarse automaticamente.
+Los datos son editables. GA4 y Search Console se importan con boton si OAuth esta.
 
 ## 9. Corregir
 
@@ -223,16 +224,19 @@ Que tengo hoy que hacer?
 -> Calendario
 
 Que aviso o error ha llegado?
--> Bandeja
+-> Avisos
 
 Como esta o que paso en n8n?
--> Automatizaciones
+-> Calendario (abrir el workflow de la tarea)
 
 Quiero crear o publicar contenido?
 -> Publicaciones
 
 Quiero medir clics e impacto mensual?
 -> Estadisticas
+
+Quiero un brief de campaña?
+-> Ads
 
 Quiero meter conocimiento nuevo?
 -> Añadir

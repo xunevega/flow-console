@@ -5,28 +5,30 @@
 ```text
 Flow Console
 ├─ Calendario
-├─ Bandeja
+├─ Libreta
 ├─ Añadir
 ├─ Corregir
 ├─ Publicaciones
+├─ Avisos
 ├─ Estadísticas
-└─ Automatizaciones
+└─ Ads
 ```
 
 ## Calendario
 
 - Ver publicaciones, tareas y señales por día.
-- Crear una publicación programada.
-- Editar una publicación.
+- Crear tareas puntuales o repetitivas.
+- Editar una tarea.
 - Editar una serie completa.
-- Borrar una publicación.
+- Borrar una tarea.
 - Borrar una serie.
+- Confirmar una publicación pendiente (no borra el post).
 - Crear repeticiones semanales, cada 2 semanas, cada 3 semanas o mensuales.
 - Usar hora local por defecto.
-- Ver contador de publicaciones por día.
+- Ver contador de acciones por día.
 - Abrir Publicaciones desde una programación.
-- Abrir Bandeja desde una señal.
-- Abrir Automatizaciones desde una tarea.
+- Abrir Avisos desde una señal.
+- Abrir workflows de n8n desde una tarea.
 
 ### Libreta de notas
 
@@ -36,7 +38,7 @@ Flow Console
 - Subir fotos en una nota.
 - Ver notas sin descontrolar el tamaño del calendario.
 
-## Bandeja
+## Avisos
 
 - Revisar avisos y salidas de automatizaciones.
 - Leer mensajes generados por n8n.
@@ -72,15 +74,14 @@ Flow Console
 - Elegir destino.
 - Editar texto de publicación.
 - Añadir imagen o vídeo.
-- Guardar borrador.
-- Programar publicación.
-- Publicar o entregar a n8n.
+- Guardar borrador local (no es el historial de posts).
+- Programar publicación (fecha/hora + cron del servidor).
+- Publicar o entregar a n8n / API del canal.
 - Revisar diagnóstico antes de publicar.
-- Ver historial.
-- Recuperar publicaciones anteriores.
-- Reenviar publicaciones.
-- Confirmar publicado.
-- Borrar historial.
+- Ver historial reciente. No se borra.
+- Recuperar el borrador local.
+- Confirmar publicado cuando la entrega quedó pendiente.
+- Elegir un archivo de la biblioteca del destino.
 
 ### Destinos
 
@@ -108,6 +109,7 @@ Flow Console
 - Guardar clics.
 - Añadir canales.
 - Importar datos de GA4.
+- Importar datos de Search Console.
 - Ver usuarios activos de GA4.
 - Ver sesiones con interacción.
 - Ver calendario anual de rendimiento.
@@ -132,6 +134,8 @@ Flow Console
 
 ## Automatizaciones
 
+No hay ítem de menú. Se abren desde Calendario cuando una tarea lo pide.
+
 - Ver workflows de n8n.
 - Ver grupos de workflows.
 - Crear grupos.
@@ -153,10 +157,10 @@ Flow Console
 
 ```text
 Calendario = agenda y notas
-Bandeja = entradas del sistema
+Avisos = entradas del sistema
 Añadir = conocimiento nuevo
 Corregir = limpiar memoria
-Publicaciones = crear y publicar
-Estadísticas = rendimiento, GA4 y UTMs
-Automatizaciones = n8n y workflows
+Publicaciones = crear, programar y publicar
+Estadísticas = rendimiento, GA4, Search Console y UTMs
+Ads = brief local; Google Ads solo si la API responde
 ```

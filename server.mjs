@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -12,6 +14,30 @@ import { PDFParse } from "pdf-parse";
 const app = express();
 const { Pool } = pg;
 const root = path.dirname(fileURLToPath(import.meta.url));
+
+function loadDotEnv() {
+  try {
+    const text = fsSync.readFileSync(path.join(root, ".env"), "utf8");
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq < 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"'))
+        || (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] == null) process.env[key] = value;
+    }
+  } catch {
+    // Local .env is optional; Railway injects env vars directly.
+  }
+}
+loadDotEnv();
 const port = Number(process.env.PORT || 4173);
 const n8nUrl = String(process.env.N8N_URL || "").replace(/\/+$/, "");
 const n8nApiKey = process.env.N8N_API_KEY || "";
@@ -68,7 +94,8 @@ const ftpRemoteDir = String(process.env.FTP_REMOTE_DIR || "/httpdocs/flow-public
 const instagramImageBaseUrl = String(process.env.INSTAGRAM_IMAGE_BASE_URL || "https://aeternal-flow.es/flow-publicaciones/instagram/imagen/").replace(/\/+$/, "") + "/";
 const ragValorarWebhook = process.env.RAG_VALORAR_WEBHOOK || "/webhook/rag/valorar";
 const ragIngestarWebhook = process.env.RAG_INGESTAR_WEBHOOK || "/webhook/rag/ingestar";
-const ragInternalToken = process.env.RAG_INTERNAL_TOKEN || sessionSecret;
+const ragInternalToken = String(process.env.RAG_INTERNAL_TOKEN || "").trim();
+const claudeSearchWebhook = String(process.env.CLAUDE_SEARCH_WEBHOOK || process.env.EXTERNAL_RESEARCH_WEBHOOK || process.env.LAST30DAYS_WEBHOOK || process.env.CLAUDE_LAST30DAYS_WEBHOOK || "/webhook/cerebro-search").trim();
 const editorialBrainUrl = String(process.env.EDITORIAL_BRAIN_URL || "").replace(/\/+$/, "");
 const editorialBrainToken = String(process.env.EDITORIAL_BRAIN_API_TOKEN || "").trim();
 const geminiApiKey = String(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || "").trim();
@@ -92,11 +119,11 @@ const defaultGroups = {
   assignments: {},
 };
 const disabledPublicationTargetIds = new Set([
-  "blue" + "sky",
-  "masto" + "don",
-  String.fromCharCode(120),
-  "face" + "book",
-  "news" + "letter",
+  "bluesky",
+  "mastodon",
+  "x",
+  "facebook",
+  "newsletter",
 ]);
 const defaultPublicationTargets = [
   {
@@ -163,7 +190,41 @@ const defaultPublicationTargets = [
 const defaultStatsChannels = ["GA4 Web", "YouTube", "Pinterest", "LinkedIn"];
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "140mb" }));
+const defaultJsonParser = express.json({ limit: "2mb" });
+const mediaJsonParser = express.json({ limit: "135mb" });
+app.use((req, res, next) => {
+  const pathName = String(req.path || req.url || "").split("?")[0];
+  const largeJsonRequest = req.method !== "GET" && (
+    pathName === "/api/publications/media"
+    || pathName === "/api/instagram/media"
+    || pathName === "/api/publications/library"
+    || pathName === "/api/calendar/notes/media"
+    || /^\/api\/publications\/posts\/[^/]+\/media$/.test(pathName)
+  );
+  if (largeJsonRequest && !validSession(req)) {
+    return res.status(401).json({ error: "No autorizado" });
+  }
+  return (largeJsonRequest ? mediaJsonParser : defaultJsonParser)(req, res, next);
+});
+app.use((req, res, next) => {
+  const files = jsonMutationFilesForRequest(req);
+  if (!files.length) return next();
+  return withJsonFileLocks(files, () => new Promise((resolve, reject) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    res.once("finish", done);
+    res.once("close", done);
+    try {
+      next();
+    } catch (error) {
+      reject(error);
+    }
+  })).catch(next);
+});
 app.use((_, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -172,14 +233,148 @@ app.use((_, res, next) => {
   next();
 });
 
+function n8nConfigured() {
+  return Boolean(n8nUrl && n8nApiKey);
+}
+
 function configured() {
-  return Boolean(n8nUrl && n8nApiKey && consolePassword && sessionSecret);
+  return Boolean(consolePassword && sessionSecret);
 }
 
 function safeEqual(left, right) {
-  const a = Buffer.from(String(left));
-  const b = Buffer.from(String(right));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const a = crypto.createHash("sha256").update(String(left)).digest();
+  const b = crypto.createHash("sha256").update(String(right)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+const fileLocks = new Map();
+const fileLockContext = new AsyncLocalStorage();
+
+function normalizeLockFile(file) {
+  return path.resolve(String(file || ""));
+}
+
+async function withJsonFileLock(file, action) {
+  const key = normalizeLockFile(file);
+  const held = fileLockContext.getStore() || new Set();
+  if (held.has(key)) return action();
+
+  const previous = fileLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => current, () => current);
+  fileLocks.set(key, chained);
+  await previous.catch(() => {});
+
+  const nextHeld = new Set(held);
+  nextHeld.add(key);
+  try {
+    return await fileLockContext.run(nextHeld, action);
+  } finally {
+    release();
+    if (fileLocks.get(key) === chained) fileLocks.delete(key);
+  }
+}
+
+async function withJsonFileLocks(files, action) {
+  const uniqueFiles = [...new Set(files.map(normalizeLockFile).filter(Boolean))].sort();
+  let run = action;
+  for (let index = uniqueFiles.length - 1; index >= 0; index -= 1) {
+    const file = uniqueFiles[index];
+    const nextRun = run;
+    run = () => withJsonFileLock(file, nextRun);
+  }
+  return run();
+}
+
+function jsonMutationFilesForRequest(req) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return [];
+  const pathName = String(req.path || req.url || "").split("?")[0];
+  const files = [];
+  const add = (file) => files.push(file);
+  if (pathName.startsWith("/api/groups")) add(groupsFile);
+  if (pathName.startsWith("/api/forums")) add(forumConfigFile);
+  if (pathName.startsWith("/api/notices")) add(noticesFile);
+  if (pathName.startsWith("/api/calendar/tasks")) add(calendarTasksFile);
+  if (pathName.startsWith("/api/calendar/notes")) add(calendarNotesFile);
+  if (pathName.startsWith("/api/calendar/signals") || pathName.startsWith("/api/internal/calendar/signals")) add(calendarSignalsFile);
+  if (
+    pathName.startsWith("/api/publications/post")
+    || pathName.startsWith("/api/publications/posts")
+    || pathName.startsWith("/api/instagram/post")
+    || pathName.startsWith("/api/instagram/posts")
+    || /^\/api\/calendar\/tasks\/[^/]+\/prepare-instagram$/.test(pathName)
+  ) add(publicationPostsFile);
+  if (
+    pathName === "/api/publications/post"
+    || pathName === "/api/instagram/post"
+    || /^\/api\/publications\/posts\/[^/]+\/confirm$/.test(pathName)
+    || /^\/api\/calendar\/tasks\/[^/]+\/prepare-instagram$/.test(pathName)
+  ) {
+    add(calendarTasksFile);
+  }
+  if (pathName.startsWith("/api/stats/monthly")) add(monthlyStatsFile);
+  if (pathName.startsWith("/api/stats/campaigns")) add(campaignUrlsFile);
+  if (pathName.startsWith("/api/publication-targets")) add(publicationTargetsFile);
+  return [...new Set(files)];
+}
+
+const loginAttempts = new Map();
+const loginWindowMs = 15 * 60 * 1000;
+const loginMaxAttempts = 8;
+const loginLockMs = 15 * 60 * 1000;
+const loginAttemptMaxEntries = 1000;
+
+function loginRateKey(req) {
+  return String(req.ip || req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").split(",")[0].trim();
+}
+
+function loginRateStatus(req) {
+  const key = loginRateKey(req);
+  const now = Date.now();
+  pruneLoginAttempts(now);
+  const entry = loginAttempts.get(key);
+  if (!entry) return { ok: true, key };
+  if (entry.lockedUntil && entry.lockedUntil > now) {
+    return { ok: false, key, retryAfter: Math.ceil((entry.lockedUntil - now) / 1000) };
+  }
+  if (entry.firstAt + loginWindowMs < now) {
+    loginAttempts.delete(key);
+    return { ok: true, key };
+  }
+  return { ok: true, key };
+}
+
+function recordLoginFailure(key) {
+  const now = Date.now();
+  pruneLoginAttempts(now);
+  const current = loginAttempts.get(key);
+  const entry = current && current.firstAt + loginWindowMs >= now
+    ? { ...current, count: current.count + 1 }
+    : { count: 1, firstAt: now, lockedUntil: 0 };
+  if (entry.count >= loginMaxAttempts) entry.lockedUntil = now + loginLockMs;
+  loginAttempts.set(key, entry);
+}
+
+function clearLoginFailures(key) {
+  loginAttempts.delete(key);
+}
+
+function pruneLoginAttempts(now = Date.now()) {
+  for (const [key, entry] of loginAttempts) {
+    const expiredWindow = Number(entry.firstAt || 0) + loginWindowMs < now;
+    const expiredLock = !entry.lockedUntil || Number(entry.lockedUntil || 0) < now;
+    if (expiredWindow && expiredLock) loginAttempts.delete(key);
+  }
+  if (loginAttempts.size <= loginAttemptMaxEntries) return;
+  const overflow = loginAttempts.size - loginAttemptMaxEntries;
+  const oldestKeys = [...loginAttempts.entries()]
+    .sort((left, right) => Number(left[1].firstAt || 0) - Number(right[1].firstAt || 0))
+    .slice(0, overflow)
+    .map(([key]) => key);
+  for (const key of oldestKeys) loginAttempts.delete(key);
 }
 
 function sign(value) {
@@ -1484,21 +1679,25 @@ function publicationVisualMemory(post) {
 }
 
 async function readVisualAnalysisCache() {
-  try {
-    const raw = await fs.readFile(visualAnalysisCacheFile, "utf8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : { items: {} };
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return { items: {} };
-  }
+  return withJsonFileLock(visualAnalysisCacheFile, async () => {
+    try {
+      const raw = await fs.readFile(visualAnalysisCacheFile, "utf8");
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : { items: {} };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return { items: {} };
+    }
+  });
 }
 
 async function writeVisualAnalysisCache(cache) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${visualAnalysisCacheFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(cache, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, visualAnalysisCacheFile);
+  return withJsonFileLock(visualAnalysisCacheFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${visualAnalysisCacheFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify(cache, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, visualAnalysisCacheFile);
+  });
 }
 
 function mimeTypeFromMediaUrl(mediaUrl = "") {
@@ -1723,6 +1922,7 @@ async function rememberPublicationInTraining(post) {
       return result.memory || null;
     } catch (error) {
       console.warn(`No se pudo enviar publicación al cerebro editorial: ${error.message}`);
+      return null;
     }
   }
   return rememberRagDocumentSoft(document, assessment);
@@ -1769,36 +1969,44 @@ function dbDocumentSource(document) {
 }
 
 async function readGroups() {
-  try {
-    return JSON.parse(await fs.readFile(groupsFile, "utf8"));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return defaultGroups;
-  }
+  return withJsonFileLock(groupsFile, async () => {
+    try {
+      return JSON.parse(await fs.readFile(groupsFile, "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return defaultGroups;
+    }
+  });
 }
 
 async function writeGroups(value) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${groupsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, groupsFile);
+  return withJsonFileLock(groupsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${groupsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, groupsFile);
+  });
 }
 
 async function readNoticesState() {
-  try {
-    const value = JSON.parse(await fs.readFile(noticesFile, "utf8"));
-    return value && typeof value === "object" ? value : {};
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return {};
-  }
+  return withJsonFileLock(noticesFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(noticesFile, "utf8"));
+      return value && typeof value === "object" ? value : {};
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return {};
+    }
+  });
 }
 
 async function writeNoticesState(value) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${noticesFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, noticesFile);
+  return withJsonFileLock(noticesFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${noticesFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, noticesFile);
+  });
 }
 
 function cleanForumConfigItem(item = {}) {
@@ -1838,39 +2046,47 @@ function dedupeForumConfigItems(items = []) {
 }
 
 async function readForumConfig() {
-  try {
-    const value = JSON.parse(await fs.readFile(forumConfigFile, "utf8"));
-    return { forums: Array.isArray(value?.forums) ? dedupeForumConfigItems(value.forums) : [] };
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return { forums: [] };
-  }
+  return withJsonFileLock(forumConfigFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(forumConfigFile, "utf8"));
+      return { forums: Array.isArray(value?.forums) ? dedupeForumConfigItems(value.forums) : [] };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return { forums: [] };
+    }
+  });
 }
 
 async function writeForumConfig(config) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${forumConfigFile}.${crypto.randomUUID()}.tmp`;
-  const forums = Array.isArray(config?.forums) ? dedupeForumConfigItems(config.forums) : [];
-  await fs.writeFile(temporaryFile, JSON.stringify({ forums }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, forumConfigFile);
-  return { forums };
+  return withJsonFileLock(forumConfigFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${forumConfigFile}.${crypto.randomUUID()}.tmp`;
+    const forums = Array.isArray(config?.forums) ? dedupeForumConfigItems(config.forums) : [];
+    await fs.writeFile(temporaryFile, JSON.stringify({ forums }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, forumConfigFile);
+    return { forums };
+  });
 }
 
 async function readCalendarTasks() {
-  try {
-    const value = JSON.parse(await fs.readFile(calendarTasksFile, "utf8"));
-    return Array.isArray(value?.tasks) ? value.tasks : [];
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return [];
-  }
+  return withJsonFileLock(calendarTasksFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(calendarTasksFile, "utf8"));
+      return Array.isArray(value?.tasks) ? value.tasks : [];
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return [];
+    }
+  });
 }
 
 async function writeCalendarTasks(tasks) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${calendarTasksFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ tasks }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, calendarTasksFile);
+  return withJsonFileLock(calendarTasksFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${calendarTasksFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ tasks }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, calendarTasksFile);
+  });
 }
 
 function cleanStatsMetric(value) {
@@ -1938,22 +2154,26 @@ function isStatsImportedDimensionNoise(value) {
 }
 
 async function readMonthlyStats() {
-  try {
-    const value = JSON.parse(await fs.readFile(monthlyStatsFile, "utf8"));
-    return Array.isArray(value?.entries)
-      ? dedupeMonthlyStats(value.entries.map((entry) => cleanMonthlyStatsRow(entry))).slice(0, 3000)
-      : [];
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return [];
-  }
+  return withJsonFileLock(monthlyStatsFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(monthlyStatsFile, "utf8"));
+      return Array.isArray(value?.entries)
+        ? dedupeMonthlyStats(value.entries.map((entry) => cleanMonthlyStatsRow(entry))).slice(0, 3000)
+        : [];
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return [];
+    }
+  });
 }
 
 async function writeMonthlyStats(entries) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${monthlyStatsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ entries: dedupeMonthlyStats(entries) }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, monthlyStatsFile);
+  return withJsonFileLock(monthlyStatsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${monthlyStatsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ entries: dedupeMonthlyStats(entries) }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, monthlyStatsFile);
+  });
 }
 
 function cleanCampaignUrl(value, current = {}) {
@@ -2014,39 +2234,47 @@ function dedupeCampaignUrls(campaigns = []) {
 }
 
 async function readCampaignUrls() {
-  try {
-    const value = JSON.parse(await fs.readFile(campaignUrlsFile, "utf8"));
-    return Array.isArray(value?.campaigns)
-      ? dedupeCampaignUrls(value.campaigns.map((campaign) => cleanCampaignUrl(campaign))).slice(0, 500)
-      : [];
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return [];
-  }
+  return withJsonFileLock(campaignUrlsFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(campaignUrlsFile, "utf8"));
+      return Array.isArray(value?.campaigns)
+        ? dedupeCampaignUrls(value.campaigns.map((campaign) => cleanCampaignUrl(campaign))).slice(0, 500)
+        : [];
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return [];
+    }
+  });
 }
 
 async function writeCampaignUrls(campaigns) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${campaignUrlsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ campaigns: dedupeCampaignUrls(campaigns) }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, campaignUrlsFile);
+  return withJsonFileLock(campaignUrlsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${campaignUrlsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ campaigns: dedupeCampaignUrls(campaigns) }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, campaignUrlsFile);
+  });
 }
 
 async function readCalendarNotes() {
-  try {
-    const value = JSON.parse(await fs.readFile(calendarNotesFile, "utf8"));
-    return Array.isArray(value?.notes) ? value.notes : [];
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return [];
-  }
+  return withJsonFileLock(calendarNotesFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(calendarNotesFile, "utf8"));
+      return Array.isArray(value?.notes) ? value.notes : [];
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return [];
+    }
+  });
 }
 
 async function writeCalendarNotes(notes) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${calendarNotesFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ notes }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, calendarNotesFile);
+  return withJsonFileLock(calendarNotesFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${calendarNotesFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ notes }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, calendarNotesFile);
+  });
 }
 
 function cleanCalendarNote(value, current = {}) {
@@ -2073,20 +2301,24 @@ function cleanCalendarNote(value, current = {}) {
 }
 
 async function readCalendarSignals() {
-  try {
-    const value = JSON.parse(await fs.readFile(calendarSignalsFile, "utf8"));
-    return value && typeof value === "object" ? value : {};
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return {};
-  }
+  return withJsonFileLock(calendarSignalsFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(calendarSignalsFile, "utf8"));
+      return value && typeof value === "object" ? value : {};
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return {};
+    }
+  });
 }
 
 async function writeCalendarSignals(value) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${calendarSignalsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, calendarSignalsFile);
+  return withJsonFileLock(calendarSignalsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${calendarSignalsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, calendarSignalsFile);
+  });
 }
 
 function addCalendarDays(value, amount) {
@@ -2189,32 +2421,69 @@ function repeatedCalendarTasks(value) {
 }
 
 async function readPublicationPosts() {
-  try {
-    const value = JSON.parse(await fs.readFile(publicationPostsFile, "utf8"));
-    return Array.isArray(value?.posts) ? value.posts : [];
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return [];
-  }
+  return withJsonFileLock(publicationPostsFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(publicationPostsFile, "utf8"));
+      return Array.isArray(value?.posts) ? value.posts : [];
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return [];
+    }
+  });
 }
 
 async function writePublicationPosts(posts) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${publicationPostsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ posts }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, publicationPostsFile);
+  return withJsonFileLock(publicationPostsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${publicationPostsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ posts }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, publicationPostsFile);
+  });
 }
 
 function postTargetId(post) {
   return String(post?.targetId || post?.target?.id || "instagram").toLowerCase();
 }
 
-function findInstagramPostForTask(posts) {
+function normalizedTaskText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function postMatchesTask(post, task) {
+  if (!task) return true;
+  const taskId = String(task.id || "");
+  if (taskId && [
+    post?.taskId,
+    post?.calendarTaskId,
+    post?.sourceTaskId,
+    post?.assistedPublish?.taskId,
+    post?.preparedPublication?.taskId,
+  ].some((value) => String(value || "") === taskId)) return true;
+
+  const taskTitle = normalizedTaskText(task.title);
+  if (!taskTitle || taskTitle.length < 8) return false;
+  const postText = normalizedTaskText([
+    post?.title,
+    post?.caption,
+    post?.notes,
+    post?.prompt,
+    post?.sourceTitle,
+  ].filter(Boolean).join(" "));
+  return postText.includes(taskTitle) || taskTitle.includes(postText.slice(0, 120));
+}
+
+function findInstagramPostForTask(posts, task = null) {
   const preferredStatuses = new Set(["pending_publication", "ready_for_review", "draft", "pending_confirmation"]);
   const instagramPosts = posts
     .filter((post) => postTargetId(post) === "instagram")
     .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
-  return instagramPosts.find((post) => preferredStatuses.has(post.status) || ["review", "draft"].includes(post.action)) || instagramPosts[0] || null;
+  const candidates = task ? instagramPosts.filter((post) => postMatchesTask(post, task)) : instagramPosts;
+  return candidates.find((post) => preferredStatuses.has(post.status) || ["review", "draft"].includes(post.action)) || candidates[0] || null;
 }
 
 function publicMediaUrl(req, post) {
@@ -2529,20 +2798,24 @@ function mergeDefaultPublicationTargets(targets) {
 }
 
 async function readPublicationTargets() {
-  try {
-    const value = JSON.parse(await fs.readFile(publicationTargetsFile, "utf8"));
-    return mergeDefaultPublicationTargets(value?.targets);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return mergeDefaultPublicationTargets([]);
-  }
+  return withJsonFileLock(publicationTargetsFile, async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(publicationTargetsFile, "utf8"));
+      return mergeDefaultPublicationTargets(value?.targets);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return mergeDefaultPublicationTargets([]);
+    }
+  });
 }
 
 async function writePublicationTargets(targets) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${publicationTargetsFile}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify({ targets: mergeDefaultPublicationTargets(targets) }, null, 2), { mode: 0o600 });
-  await fs.rename(temporaryFile, publicationTargetsFile);
+  return withJsonFileLock(publicationTargetsFile, async () => {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${publicationTargetsFile}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify({ targets: mergeDefaultPublicationTargets(targets) }, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, publicationTargetsFile);
+  });
 }
 
 function cleanPublicationHtml(value) {
@@ -2655,7 +2928,7 @@ async function publicationPreflight(payload, workerHealth = null) {
   else ok("caption", "Texto OK", `${String(payload.caption || "").length} caracteres.`);
   if (targetId === "youtube") {
     if (youtubeUploadConfigured()) ok("youtube", "YouTube OK", `Publica como ${youtubePrivacyStatus}.`);
-    else block("youtube", "YouTube sin OAuth", "Faltan credenciales o refresh token.");
+    else block("youtube", "YouTube sin OAuth", "Faltan credenciales o refresh token. Autoriza en /oauth/youtube/start.");
     if (safeUrl(payload.videoUrl || payload.imageUrl)) ok("video", "Vídeo OK");
     else block("video", "Falta vídeo", "Sube un MP4, WebM o MOV.");
   } else if (targetId === "pinterest") {
@@ -2855,6 +3128,17 @@ function cleanGa4Dimension(value) {
   return text && !/^\((not set|direct|none|referral|organic)\)$/i.test(text) ? text : "";
 }
 
+function ga4TrafficDimension(value, fallback = "(not set)") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function ga4DateLabel(value) {
+  const text = String(value || "").trim();
+  if (/^\d{8}$/.test(text)) return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+  return text;
+}
+
 function titleCaseChannel(value) {
   const text = String(value || "").trim();
   if (!text) return "UTM";
@@ -2959,6 +3243,8 @@ async function ga4MonthlyStats({ year, month }) {
     { name: "screenPageViews" },
     { name: "activeUsers" },
     { name: "engagedSessions" },
+    { name: "eventCount" },
+    { name: "userEngagementDuration" },
   ];
   const result = await ga4RunReport({
     propertyId,
@@ -2973,6 +3259,8 @@ async function ga4MonthlyStats({ year, month }) {
   const pageViews = Math.round(Number(values[1]?.value || 0));
   const activeUsers = Math.round(Number(values[2]?.value || 0));
   const engagedSessions = Math.round(Number(values[3]?.value || 0));
+  const eventCount = Math.round(Number(values[4]?.value || 0));
+  const engagementSeconds = Math.round(Number(values[5]?.value || 0));
   const savedCampaigns = await readCampaignUrls();
   let sourceResult;
   try {
@@ -3018,27 +3306,90 @@ async function ga4MonthlyStats({ year, month }) {
     .map((row) => {
       const dimensions = row.dimensionValues || [];
       const metrics = row.metricValues || [];
-      const source = cleanGa4Dimension(dimensions[0]?.value);
-      const medium = cleanGa4Dimension(dimensions[1]?.value);
+      const sourceRaw = ga4TrafficDimension(dimensions[0]?.value, "(direct)");
+      const mediumRaw = ga4TrafficDimension(dimensions[1]?.value, "(none)");
+      const source = cleanGa4Dimension(sourceRaw);
+      const medium = cleanGa4Dimension(mediumRaw);
       const campaign = cleanGa4Dimension(dimensions[2]?.value);
       const content = cleanGa4Dimension(dimensions[3]?.value);
+      const sessions = Math.round(Number(metrics[0]?.value || 0));
+      const engagedSessions = Math.round(Number(metrics[3]?.value || 0));
+      const rowEngagementSeconds = Math.round(Number(metrics[5]?.value || 0));
       return {
+        sourceRaw,
+        mediumRaw,
         source,
         medium,
         campaign,
         content,
-        sessions: Math.round(Number(metrics[0]?.value || 0)),
+        sessions,
         pageViews: Math.round(Number(metrics[1]?.value || 0)),
         activeUsers: Math.round(Number(metrics[2]?.value || 0)),
-        engagedSessions: Math.round(Number(metrics[3]?.value || 0)),
+        engagedSessions,
+        eventCount: Math.round(Number(metrics[4]?.value || 0)),
+        engagementSeconds: rowEngagementSeconds,
+        engagementRate: sessions ? Math.round((engagedSessions / sessions) * 10000) / 100 : 0,
+        averageEngagementSeconds: sessions ? Math.round(rowEngagementSeconds / sessions) : 0,
       };
     })
-    .filter((row) => row.sessions > 0 && (row.campaign || row.content || hasSavedCampaignMatch(row)))
+    .filter((row) => row.sessions > 0);
+  const trafficRows = utmRows.map((row) => ({
+    source: row.sourceRaw,
+    medium: row.mediumRaw,
+    sourceMedium: `${row.sourceRaw} / ${row.mediumRaw}`,
+    sessions: row.sessions,
+    engagedSessions: row.engagedSessions,
+    engagementRate: row.engagementRate,
+    averageEngagementSeconds: row.averageEngagementSeconds,
+    eventCount: row.eventCount,
+    pageViews: row.pageViews,
+    activeUsers: row.activeUsers,
+  }));
+  const campaignRows = utmRows
+    .filter((row) => row.campaign || row.content || hasSavedCampaignMatch(row))
     .map((row) => ({
       ...row,
       channel: campaignDisplayName(row, savedCampaigns),
     }));
-  const mergedUtmRows = mergeMetricRowsByChannel(utmRows);
+  const mergedUtmRows = mergeMetricRowsByChannel(campaignRows);
+  let trafficSeries = [];
+  try {
+    const seriesResult = await ga4RunReport({
+      propertyId,
+      accessToken,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [
+          { name: "date" },
+          { name: "sessionSource" },
+          { name: "sessionMedium" },
+        ],
+        metrics: [{ name: "sessions" }],
+        orderBys: [
+          { dimension: { dimensionName: "date" } },
+          { metric: { metricName: "sessions" }, desc: true },
+        ],
+        limit: 1000,
+      },
+    });
+    trafficSeries = (seriesResult.rows || [])
+      .map((row) => {
+        const dimensions = row.dimensionValues || [];
+        const metrics = row.metricValues || [];
+        const source = ga4TrafficDimension(dimensions[1]?.value, "(direct)");
+        const medium = ga4TrafficDimension(dimensions[2]?.value, "(none)");
+        return {
+          date: ga4DateLabel(dimensions[0]?.value),
+          source,
+          medium,
+          sourceMedium: `${source} / ${medium}`,
+          sessions: Math.round(Number(metrics[0]?.value || 0)),
+        };
+      })
+      .filter((row) => row.date && row.sessions > 0);
+  } catch {
+    trafficSeries = [];
+  }
   let outboundRows = [];
   try {
     const outboundResult = await ga4RunReport({
@@ -3095,6 +3446,10 @@ async function ga4MonthlyStats({ year, month }) {
     pageViews,
     activeUsers,
     engagedSessions,
+    eventCount,
+    engagementSeconds,
+    trafficRows,
+    trafficSeries,
     utmRows: mergedUtmRows,
     outboundRows,
     row,
@@ -3373,16 +3728,12 @@ async function publishPublicationPayload(payload, source = "flow-console") {
   }
   const webhookPath = cleanWebhookPath(payload?.target?.webhookPath) || "/webhook/publicar-instagram";
   const externalInstagramFlow = payload?.target?.id === "instagram";
-  const brain = await queryEditorialBrain({
+  const brain = await editorialBrainForDelivery({
     task: "publication_delivery",
     channel: payload?.target?.id || payload?.target?.name || "",
     context: payload || {},
-  }).catch(async () => {
-    const memory = await readRagMemory().catch(() => emptyRagMemory());
-    const memoryPayload = generatorMemoryPayload(memory);
-    return { memory: memoryPayload, instruction: generatorMemoryInstruction(memoryPayload), source: "flow-console-local-rag" };
   });
-  const memoryPayload = brain.memory || generatorMemoryPayload(emptyRagMemory());
+  const localMemory = brain.configured ? null : await localMemoryIfUsable();
   const response = await fetch(`${n8nUrl}${webhookPath}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3393,12 +3744,8 @@ async function publishPublicationPayload(payload, source = "flow-console") {
       deliveryMode: externalInstagramFlow ? "external_flow" : "webhook",
       skipMeta: externalInstagramFlow,
       avoidMetaIntegration: externalInstagramFlow,
-      rag_memory: memoryPayload,
-      memoria_rag: memoryPayload,
-      editorial_brain: {
-        source: brain.source,
-        instruction: brain.instruction,
-      },
+      ...n8nEditorialBrainFields(brain),
+      ...(localMemory ? n8nMemoryFields(localMemory) : {}),
       source,
       requestedAt: new Date().toISOString(),
     }),
@@ -3765,6 +4112,93 @@ async function callN8nWebhook(webhook, payload, timeoutMs = 150000) {
   return body;
 }
 
+function normalizeLast30DaysWebhookResult(keyword, body) {
+  const payload = Array.isArray(body)
+    ? body.map((item) => item?.json || item).filter(Boolean)
+    : body?.json || body;
+  const first = Array.isArray(payload) ? payload[0] || {} : payload || {};
+  const embeddedText = String(first.text || first.answer || first.response || first.message || "").trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  let embedded = null;
+  if (embeddedText.startsWith("{")) {
+    try {
+      embedded = JSON.parse(embeddedText);
+    } catch {
+      embedded = null;
+    }
+  }
+  const result = embedded && typeof embedded === "object" ? { ...first, ...embedded } : first;
+  const candidates = result.items || result.results || result.resultados || result.data || (Array.isArray(payload) ? payload : []);
+  const items = Array.isArray(candidates)
+    ? candidates.slice(0, 25).map((item) => ({
+      title: String(item.title || item.titulo || item.name || item.url || item.text || item.summary || "").trim().slice(0, 260),
+      url: safeUrl(item.url || item.link || item.href) || "",
+      source: String(item.source || item.fuente || item.domain || item.site || "").trim().slice(0, 120),
+      publishedAt: String(item.publishedAt || item.published_at || item.date || item.fecha || "").trim().slice(0, 80),
+      summary: String(item.summary || item.resumen || item.description || item.text || "").trim().slice(0, 600),
+    })).filter((item) => item.title || item.url || item.summary)
+    : [];
+  const text = String(
+    result.label
+    || result.etiqueta
+    || result.title
+    || result.titulo
+    || result.result
+    || result.output
+    || result.summary
+    || result.resumen
+    || result.answer
+    || result.response
+    || result.message
+    || result.text
+    || "",
+  ).trim();
+  return {
+    ok: true,
+    keyword,
+    source: "n8n-claude",
+    provider: "n8n / Claude",
+    label: String(result.label || result.etiqueta || "").trim().slice(0, 260),
+    text: text.slice(0, 12000) || (items.length ? `${items.length} resultados de Claude.` : "Claude no devolvió texto estructurado."),
+    items,
+    raw: text || items.length ? null : payload,
+    receivedAt: new Date().toISOString(),
+  };
+}
+
+async function queryClaudeSearch(keyword) {
+  const cleanKeyword = String(keyword || "").trim().slice(0, 160);
+  if (!cleanKeyword) throw new Error("Escribe una palabra para buscar");
+  const response = await fetch(webhookUrl(claudeSearchWebhook), {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: cleanKeyword,
+      topic: cleanKeyword,
+      keyword: cleanKeyword,
+      mode: "publication_label_search",
+      instruction: "Busca informacion externa generica para crear un label util. No limites por fecha salvo que la consulta lo pida literalmente.",
+    }),
+    signal: AbortSignal.timeout(150000),
+  });
+  const text = await response.text();
+  let body = null;
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = { message: stripMarkup(text).replace(/\s+/g, " ").trim().slice(0, 500) };
+  }
+  if (!response.ok || body?.ok === false) {
+    const message = body?.error || body?.message || `n8n respondió ${response.status}`;
+    const error = new Error(String(message).slice(0, 500));
+    error.status = response.status || 502;
+    throw error;
+  }
+  return normalizeLast30DaysWebhookResult(cleanKeyword, body);
+}
+
 function editorialBrainEnabled() {
   return Boolean(editorialBrainUrl && editorialBrainToken);
 }
@@ -3797,21 +4231,205 @@ async function callEditorialBrain(pathname, options = {}) {
 
 async function queryEditorialBrain(context = {}) {
   if (!editorialBrainEnabled()) {
-    const memory = await readRagMemory();
-    const memoryPayload = generatorMemoryPayload(memory);
-    return {
-      memory: memoryPayload,
-      instruction: generatorMemoryInstruction(memoryPayload),
-      source: "flow-console-local-rag",
-    };
+    return { configured: false, source: "none", memory: null, instruction: "" };
   }
-  return callEditorialBrain("/api/brain/query", {
+  const body = await callEditorialBrain("/api/brain/query", {
     method: "POST",
     body: JSON.stringify({
       app: "flow-console",
       ...context,
     }),
   });
+  return {
+    configured: true,
+    ...body,
+    source: body.source || "editorial-brain",
+  };
+}
+
+const BRAIN_GENERATE_MISSING = new Set([404, 405, 501]);
+
+async function generateWithEditorialBrain(payload) {
+  try {
+    const body = await callEditorialBrain("/api/brain/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        app: "flow-console",
+        task: "content_generation",
+        ...payload,
+      }),
+    });
+    return {
+      configured: true,
+      ...body,
+      source: body.source || "editorial-brain",
+    };
+  } catch (error) {
+    if (!BRAIN_GENERATE_MISSING.has(Number(error.status))) throw error;
+    return queryEditorialBrain({
+      task: "content_generation",
+      channel: payload.channel || "",
+      context: payload.context || {},
+    });
+  }
+}
+
+function extractBrainTextVariants(brain, limit = 3) {
+  const raw = brain?.variantes || brain?.variants || brain?.drafts || brain?.texts || [];
+  const fromList = (Array.isArray(raw) ? raw : [])
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      if (!item || typeof item !== "object") return "";
+      return String(item.text || item.caption || item.content || item.html || "").trim();
+    })
+    .filter(Boolean);
+  if (fromList.length) return fromList.slice(0, Math.max(1, limit));
+  const single = String(brain?.text || brain?.caption || brain?.content || brain?.draft || "").trim();
+  return single ? [single] : [];
+}
+
+function memoryIsUsable(memory) {
+  if (!memory || typeof memory !== "object") return false;
+  if (Number(memory.documentCount || 0) > 0) return true;
+  const lists = [
+    memory.tags,
+    memory.topics,
+    memory.recentDocuments,
+    memory.documents,
+    memory.ruleEntities,
+    memory.ideaEntities,
+    memory.textPreferences,
+    memory.styleTags,
+    memory.promptHints,
+  ];
+  return lists.some((value) => Array.isArray(value) && value.length > 0);
+}
+
+function memoryDocumentCount(memory) {
+  if (!memory || typeof memory !== "object") return 0;
+  if (Number(memory.documentCount || 0) > 0) return Number(memory.documentCount);
+  if (Array.isArray(memory.recentDocuments) && memory.recentDocuments.length) return memory.recentDocuments.length;
+  if (Array.isArray(memory.documents) && memory.documents.length) return memory.documents.length;
+  return 0;
+}
+
+function brainContribution(brain) {
+  const variants = extractBrainTextVariants(brain, 3);
+  const instruction = String(brain?.instruction || "").trim();
+  const memory = brain?.memory && typeof brain.memory === "object" ? brain.memory : null;
+  const memoryUsed = memoryIsUsable(memory);
+  return {
+    variants,
+    instruction,
+    memory,
+    memoryUsed,
+    wroteText: variants.length > 0,
+    usable: variants.length > 0 || instruction.length > 0 || memoryUsed,
+    source: String(brain?.source || "editorial-brain"),
+  };
+}
+
+async function probeEditorialBrain() {
+  if (!editorialBrainEnabled()) {
+    return { configured: false, live: false, ready: false, status: null, error: null };
+  }
+  try {
+    const status = await callEditorialBrain("/api/rag/status", { method: "GET", timeoutMs: 15000 });
+    return {
+      configured: true,
+      live: true,
+      ready: status.ready !== false,
+      status,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      live: false,
+      ready: false,
+      status: null,
+      error: error.message,
+    };
+  }
+}
+
+async function localMemoryIfUsable() {
+  const memory = await readRagMemory().catch(() => emptyRagMemory());
+  const payload = generatorMemoryPayload(memory);
+  return memoryIsUsable(payload) ? payload : null;
+}
+
+async function editorialBrainForDelivery(context) {
+  if (!editorialBrainEnabled()) {
+    return { configured: false, applied: false, live: false, memory: null, instruction: "", source: "" };
+  }
+  try {
+    const brain = await queryEditorialBrain(context);
+    const contribution = brainContribution(brain);
+    if (!contribution.usable) {
+      return {
+        configured: true,
+        applied: false,
+        live: true,
+        memory: null,
+        instruction: "",
+        source: contribution.source,
+      };
+    }
+    return {
+      configured: true,
+      applied: true,
+      live: true,
+      wroteText: contribution.wroteText,
+      memory: contribution.memory,
+      instruction: contribution.instruction,
+      source: contribution.source,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      applied: false,
+      live: false,
+      error: error.message,
+      memory: null,
+      instruction: "",
+      source: "",
+    };
+  }
+}
+
+function n8nMemoryFields(memoryPayload) {
+  if (!memoryIsUsable(memoryPayload)) return {};
+  return {
+    rag_memory: memoryPayload,
+    memoria_rag: memoryPayload,
+  };
+}
+
+function n8nEditorialBrainFields(delivery) {
+  if (!delivery?.applied) return {};
+  return {
+    ...n8nMemoryFields(delivery.memory),
+    editorial_brain: {
+      configured: true,
+      applied: true,
+      source: delivery.source,
+      instruction: delivery.instruction,
+    },
+  };
+}
+
+function brainClientReport(contribution, extra = {}) {
+  return {
+    configured: true,
+    live: extra.live !== false,
+    applied: extra.applied !== false && Boolean(contribution?.usable),
+    wroteText: Boolean(contribution?.wroteText),
+    source: contribution?.source || extra.source || "editorial-brain",
+    instruction: contribution?.instruction ? contribution.instruction.slice(0, 800) : "",
+    documentCount: memoryDocumentCount(contribution?.memory) || null,
+    ...extra,
+  };
 }
 
 async function rememberEditorialBrainUsage(memoryPayload) {
@@ -4139,9 +4757,9 @@ function stripMarkup(value = "") {
 function safeUrl(value) {
   try {
     const url = new URL(String(value || ""));
-    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
   } catch {
-    return null;
+    return "";
   }
 }
 
@@ -4257,11 +4875,15 @@ function extractNotices(executions, workflows, state) {
 }
 
 app.get("/api/session", (req, res) => {
-  res.json({ authenticated: validSession(req), configured: configured() });
+  res.json({
+    authenticated: validSession(req),
+    configured: configured(),
+    n8n: n8nConfigured(),
+  });
 });
 
 function healthcheckResponse(_, res) {
-  res.status(200).json({ ok: true, configured: configured() });
+  res.status(200).json({ ok: true, configured: configured(), n8n: n8nConfigured() });
 }
 
 app.get("/health", healthcheckResponse);
@@ -4276,9 +4898,16 @@ app.post("/api/login", (req, res) => {
   if (!configured()) {
     return res.status(503).json({ error: "Faltan variables de entorno del servidor" });
   }
+  const rate = loginRateStatus(req);
+  if (!rate.ok) {
+    res.setHeader("Retry-After", String(rate.retryAfter || 60));
+    return res.status(429).json({ error: "Demasiados intentos. Espera un momento antes de volver a probar." });
+  }
   if (!safeEqual(req.body?.password || "", consolePassword)) {
+    recordLoginFailure(rate.key);
     return res.status(401).json({ error: "Contraseña incorrecta" });
   }
+  clearLoginFailures(rate.key);
   res.setHeader(
     "Set-Cookie",
     `flow_console_session=${createSession()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${production ? "; Secure" : ""}`,
@@ -4870,7 +5499,7 @@ app.post("/api/calendar/tasks/:id/prepare-instagram", requireAuth, async (req, r
     }
 
     const posts = await readPublicationPosts();
-    const post = findInstagramPostForTask(posts);
+    const post = findInstagramPostForTask(posts, task);
     const caption = String(post?.caption || task.notes || task.title || "").trim();
     const instagramUrl = "https://www.instagram.com/";
     const mediaUrl = post ? publicMediaUrl(req, post) : "";
@@ -5027,7 +5656,10 @@ app.get("/api/rag/status", requireAuth, async (_, res) => {
       const status = await callEditorialBrain("/api/rag/status", { method: "GET", timeoutMs: 30000 });
       return res.json({
         ...status,
+        configured: true,
         externalBrain: true,
+        live: true,
+        ready: status.ready !== false,
         brainUrl: editorialBrainUrl,
       });
     }
@@ -5056,15 +5688,19 @@ app.get("/api/rag/status", requireAuth, async (_, res) => {
     });
   } catch (error) {
     const memory = await readRagMemory().catch(() => null);
-    res.status(error.status || 502).json({
-      configured: Boolean(n8nUrl && n8nApiKey),
+    const payload = {
+      configured: Boolean(n8nUrl && n8nApiKey) || editorialBrainEnabled(),
+      externalBrain: editorialBrainEnabled(),
+      live: false,
       valorarWebhook: ragValorarWebhook,
       ingestarWebhook: ragIngestarWebhook,
       workflow: null,
       ready: false,
       memory: memory ? generatorMemoryPayload(memory) : null,
       error: error.message,
-    });
+    };
+    if (editorialBrainEnabled()) return res.json(payload);
+    res.status(error.status || 502).json(payload);
   }
 });
 
@@ -5472,12 +6108,12 @@ app.post("/api/workflows/:id/run", requireAuth, async (req, res) => {
     const context = req.body && typeof req.body === "object" ? req.body : {};
     const subject = String(context.subject || context.title || "").trim();
     const workflowName = String(context.workflowName || req.params.id).trim();
-    const brain = await queryEditorialBrain({
+    const brain = await editorialBrainForDelivery({
       task: "workflow_run",
       workflowId: req.params.id,
       context,
     });
-    const memoryPayload = brain.memory || generatorMemoryPayload(emptyRagMemory());
+    const localMemory = brain.configured ? null : await localMemoryIfUsable();
     const response = await fetch(`${n8nUrl}/webhook/${pathName}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5487,12 +6123,9 @@ app.post("/api/workflows/:id/run", requireAuth, async (req, res) => {
         noticeId: context.noticeId || "",
         sourceExecutionId: context.executionId || "",
         subject,
-        rag_memory: memoryPayload,
-        memoria_rag: memoryPayload,
-        editorial_brain: {
-          source: brain.source,
-          instruction: brain.instruction,
-        },
+        workflowName,
+        ...n8nEditorialBrainFields(brain),
+        ...(localMemory ? n8nMemoryFields(localMemory) : {}),
       }),
       signal: AbortSignal.timeout(150000),
     });
@@ -5576,15 +6209,120 @@ app.post("/api/executions/:id/retry", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/generator/status", requireAuth, async (_, res) => {
+  const probe = await probeEditorialBrain();
+  res.json({
+    ok: true,
+    configured: probe.configured,
+    brain: probe.live,
+    brainLive: probe.live,
+    ready: probe.ready,
+    n8n: Boolean(n8nUrl && n8nApiKey),
+    webhook: "/webhook/generador-contenido",
+    memory: probe.status?.memory || null,
+    error: probe.error,
+  });
+});
+
 app.post("/api/generator", requireAuth, async (req, res) => {
   try {
-    const brain = await queryEditorialBrain({
-      task: "content_generation",
-      channel: req.body?.destino || req.body?.formato || req.body?.targetId || "",
-      context: req.body || {},
-    });
-    const memoryPayload = brain.memory || generatorMemoryPayload(emptyRagMemory());
+    const requestedVariants = Math.max(1, Math.min(3, Number(req.body?.variantes || 3)));
     const { body: enrichedBody } = await enrichGeneratorBody(req.body || {});
+    const channel = req.body?.destino || req.body?.formato || req.body?.targetId || "";
+
+    if (editorialBrainEnabled()) {
+      let brain;
+      try {
+        brain = await generateWithEditorialBrain({
+          channel,
+          requestedVariants,
+          context: enrichedBody,
+        });
+      } catch (error) {
+        return res.status(error.status || 502).json({
+          error: `El cerebro editorial no respondió: ${error.message}`,
+          editorial_brain: { configured: true, live: false, applied: false, wroteText: false },
+        });
+      }
+      const contribution = brainContribution(brain);
+      if (!contribution.usable) {
+        return res.status(502).json({
+          error: "El cerebro editorial no aportó texto ni memoria útil. No se genera fingiendo que ayudó.",
+          editorial_brain: brainClientReport(contribution, { live: true, applied: false }),
+        });
+      }
+      if (contribution.wroteText) {
+        const usedMemory = await rememberEditorialBrainUsage(contribution.memory).catch(() => contribution.memory);
+        return res.json({
+          ok: true,
+          source: "editorial-brain",
+          variantes: contribution.variants.slice(0, requestedVariants),
+          rag_memory: usedMemory,
+          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+        });
+      }
+      if (!n8nUrl) {
+        return res.status(503).json({
+          error: "El cerebro orientó con memoria, pero no escribió texto y falta n8n para generar variantes.",
+          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+        });
+      }
+      const existingInstructions = String(enrichedBody?.instrucciones || "").trim();
+      const editingMode = generatorEditingMode(enrichedBody);
+      const requestBody = {
+        ...enrichedBody,
+        editing_mode: editingMode,
+        modo_edicion: editingMode,
+        instrucciones: [
+          generatorIntentInstruction(enrichedBody?.intencion),
+          generatorSourceMaterialInstruction(enrichedBody),
+          existingInstructions,
+          contribution.instruction,
+        ].filter(Boolean).join("\n\n"),
+        source: "flow-console-generator",
+        ...n8nMemoryFields(contribution.memory),
+        editorial_brain: {
+          configured: true,
+          applied: true,
+          source: contribution.source,
+          instruction: contribution.instruction,
+        },
+      };
+      const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(150000),
+      });
+      const text = await response.text();
+      let body;
+      try {
+        body = text ? JSON.parse(text) : {};
+      } catch {
+        body = { error: text || "n8n devolvió una respuesta vacía" };
+      }
+      if (!response.ok || body?.ok === false) {
+        return res.status(response.status || 502).json({
+          error: body?.error || body?.message || `n8n respondió ${response.status}`,
+          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+        });
+      }
+      const usedMemory = await rememberEditorialBrainUsage(contribution.memory).catch(() => contribution.memory);
+      return res.json({
+        ...body,
+        source: "n8n",
+        rag_memory: usedMemory,
+        editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+      });
+    }
+
+    if (!n8nUrl) {
+      return res.status(503).json({
+        error: "No hay cerebro editorial ni n8n. No se puede generar texto.",
+        editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
+      });
+    }
+    const localMemory = await localMemoryIfUsable();
     const existingInstructions = String(enrichedBody?.instrucciones || "").trim();
     const editingMode = generatorEditingMode(enrichedBody);
     const requestBody = {
@@ -5595,15 +6333,10 @@ app.post("/api/generator", requireAuth, async (req, res) => {
         generatorIntentInstruction(enrichedBody?.intencion),
         generatorSourceMaterialInstruction(enrichedBody),
         existingInstructions,
-        brain.instruction || generatorMemoryInstruction(memoryPayload),
+        localMemory ? generatorMemoryInstruction(localMemory) : "",
       ].filter(Boolean).join("\n\n"),
-      rag_memory: memoryPayload,
-      memoria_rag: memoryPayload,
-      editorial_brain: {
-        source: brain.source,
-        applicable: brain.applicable || null,
-      },
       source: "flow-console-generator",
+      ...(localMemory ? n8nMemoryFields(localMemory) : {}),
     };
     const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
       method: "POST",
@@ -5621,10 +6354,18 @@ app.post("/api/generator", requireAuth, async (req, res) => {
     if (!response.ok || body?.ok === false) {
       return res.status(response.status || 502).json({
         error: body?.error || body?.message || `n8n respondió ${response.status}`,
+        editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
       });
     }
-    const usedMemory = await rememberEditorialBrainUsage(memoryPayload).catch(() => memoryPayload);
-    res.json({ ...body, rag_memory: usedMemory?.documentCount !== undefined ? usedMemory : generatorMemoryPayload(usedMemory) });
+    const usedMemory = localMemory
+      ? await rememberEditorialBrainUsage(localMemory).catch(() => localMemory)
+      : null;
+    res.json({
+      ...body,
+      source: "n8n",
+      rag_memory: usedMemory,
+      editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
+    });
   } catch (error) {
     const timedOut = error?.name === "TimeoutError";
     res.status(timedOut ? 504 : 502).json({
@@ -5662,18 +6403,6 @@ async function handlePublicationPosts(_, res) {
 
 app.get("/api/publications/posts", requireAuth, handlePublicationPosts);
 app.get("/api/instagram/posts", requireAuth, handlePublicationPosts);
-
-app.delete("/api/publications/posts/:id", requireAuth, async (req, res) => {
-  try {
-    const posts = await readPublicationPosts();
-    const nextPosts = posts.filter((post) => post.id !== req.params.id);
-    if (nextPosts.length === posts.length) return res.status(404).json({ error: "Publicación no encontrada" });
-    await writePublicationPosts(nextPosts);
-    res.json({ ok: true, posts: nextPosts.slice(0, 50) });
-  } catch (error) {
-    res.status(500).json({ error: `No se pudo borrar del historial: ${error.message}` });
-  }
-});
 
 app.get("/api/stats/monthly", requireAuth, async (_, res) => {
   try {
@@ -5735,6 +6464,18 @@ app.get("/api/stats/ga4", requireAuth, async (req, res) => {
     res.json({ ok: true, ...(await ga4MonthlyStats({ year, month })) });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/claude/last30days", requireAuth, async (req, res) => {
+  try {
+    const keyword = req.body?.keyword || req.body?.label || req.body?.query || req.body?.palabra;
+    const result = await queryClaudeSearch(keyword);
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 502).json({
+      error: `No se pudo consultar la busqueda externa: ${error.message}`,
+    });
   }
 });
 
@@ -5822,16 +6563,37 @@ app.delete("/api/stats/campaigns/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.delete("/api/publications/posts", requireAuth, async (_, res) => {
-  try {
-    await writePublicationPosts([]);
-    res.json({ ok: true, posts: [] });
-  } catch (error) {
-    res.status(500).json({ error: `No se pudo borrar el historial: ${error.message}` });
-  }
-});
+function googleAdsConfigured() {
+  return Boolean(
+    googleAdsConfig.clientId
+    && googleAdsConfig.clientSecret
+    && googleAdsConfig.developerToken
+    && googleAdsConfig.refreshToken
+    && googleAdsConfig.customerId,
+  );
+}
 
-app.get("/api/google-ads/status", requireAuth, async (_, res) => {
+async function googleAdsAccessToken() {
+  if (!googleAdsConfigured()) throw new Error("Google Ads no está configurado");
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: googleAdsConfig.clientId,
+      client_secret: googleAdsConfig.clientSecret,
+      refresh_token: googleAdsConfig.refreshToken,
+      grant_type: "refresh_token",
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.access_token) {
+    throw new Error(result.error_description || result.error || `Google OAuth respondió ${response.status}`);
+  }
+  return result.access_token;
+}
+
+async function probeGoogleAds() {
   const checks = [
     ["clientId", "GOOGLE_ADS_CLIENT_ID o GOOGLE_CLIENT_ID", googleAdsConfig.clientId],
     ["clientSecret", "GOOGLE_ADS_CLIENT_SECRET o GOOGLE_CLIENT_SECRET", googleAdsConfig.clientSecret],
@@ -5839,19 +6601,60 @@ app.get("/api/google-ads/status", requireAuth, async (_, res) => {
     ["refreshToken", "GOOGLE_ADS_REFRESH_TOKEN", googleAdsConfig.refreshToken],
     ["customerId", "GOOGLE_ADS_CUSTOMER_ID", googleAdsConfig.customerId],
   ].map(([id, label, value]) => ({ id, label, configured: Boolean(value) }));
-  res.json({
-    ok: true,
-    configured: checks.every((check) => check.configured),
-    checks,
-    optional: [
-      {
-        id: "loginCustomerId",
-        label: "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
-        configured: Boolean(googleAdsConfig.loginCustomerId),
-        detail: "Solo necesario si usas MCC/cuenta manager.",
-      },
-    ],
-  });
+  const optional = [{
+    id: "loginCustomerId",
+    label: "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+    configured: Boolean(googleAdsConfig.loginCustomerId),
+    detail: "Solo necesario si usas MCC/cuenta manager.",
+  }];
+  if (!googleAdsConfigured()) {
+    return { ok: true, configured: false, live: false, checks, optional };
+  }
+  try {
+    const accessToken = await googleAdsAccessToken();
+    const customerId = googleAdsConfig.customerId.replace(/-/g, "");
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      "developer-token": googleAdsConfig.developerToken,
+      "Content-Type": "application/json",
+    };
+    if (googleAdsConfig.loginCustomerId) {
+      headers["login-customer-id"] = googleAdsConfig.loginCustomerId.replace(/-/g, "");
+    }
+    const response = await fetch(`https://googleads.googleapis.com/v18/customers/${customerId}/googleAds:search`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query: "SELECT customer.id, customer.descriptive_name FROM customer LIMIT 1" }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body?.error?.message || `Google Ads respondió ${response.status}`);
+    }
+    const account = body?.results?.[0]?.customer?.descriptiveName || "";
+    return {
+      ok: true,
+      configured: true,
+      live: true,
+      customerId,
+      account,
+      checks,
+      optional,
+    };
+  } catch (error) {
+    return {
+      ok: true,
+      configured: true,
+      live: false,
+      error: error.message,
+      checks,
+      optional,
+    };
+  }
+}
+
+app.get("/api/google-ads/status", requireAuth, async (_, res) => {
+  res.json(await probeGoogleAds());
 });
 
 app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) => {
@@ -6105,16 +6908,6 @@ app.put("/api/blog/articles/:slug", requireAuth, async (req, res) => {
   }
 });
 
-app.delete("/api/blog/articles/:slug", requireAuth, async (req, res) => {
-  try {
-    const slug = String(req.params.slug || "").trim();
-    const result = await requestAeternalBlogArticles(`?slug=${encodeURIComponent(slug)}`, { method: "DELETE" });
-    res.json(result);
-  } catch (error) {
-    res.status(error.status || 502).json({ error: `No se pudo borrar el artículo: ${error.message}` });
-  }
-});
-
 app.post("/api/publications/posts/:id/media", requireAuth, async (req, res) => {
   try {
     const posts = await readPublicationPosts();
@@ -6245,7 +7038,7 @@ async function handlePublicationSubmit(req, res) {
       : `No se pudo entregar ${targetName} al sistema de publicación: ${error.message}`;
     res.status(timedOut ? 504 : 502).json({
       error: timedOut
-        ? "El flujo de publicación continúa en n8n, pero superó el tiempo de espera de la consola"
+        ? "El sistema de publicación sigue trabajando, pero superó el tiempo de espera de la consola"
         : deliveryLabel,
     });
   }
@@ -6256,65 +7049,67 @@ app.post("/api/instagram/post", requireAuth, handlePublicationSubmit);
 
 async function processScheduledPublicationPosts() {
   if (!configured()) return;
-  const posts = await readPublicationPosts();
-  const now = Date.now();
-  let changed = false;
-  const nextPosts = [];
+  return withJsonFileLocks([publicationPostsFile, calendarTasksFile], async () => {
+    const posts = await readPublicationPosts();
+    const now = Date.now();
+    let changed = false;
+    const nextPosts = [];
 
-  for (const post of posts) {
-    const due = post.action === "schedule"
-      && post.scheduledAt
-      && new Date(post.scheduledAt).getTime() <= now
-      && ["schedule", "scheduled"].includes(post.status);
+    for (const post of posts) {
+      const due = post.action === "schedule"
+        && post.scheduledAt
+        && new Date(post.scheduledAt).getTime() <= now
+        && ["schedule", "scheduled"].includes(post.status);
 
-    if (!due) {
-      nextPosts.push(post);
-      continue;
+      if (!due) {
+        nextPosts.push(post);
+        continue;
+      }
+
+      const publishing = {
+        ...post,
+        status: "publishing",
+        updatedAt: new Date().toISOString(),
+        lastError: null,
+      };
+      nextPosts.push(publishing);
+      changed = true;
+      await writePublicationPosts(nextPosts.concat(posts.slice(nextPosts.length)));
+
+      try {
+        if (!publishing.target?.webhookPath) {
+          throw new Error(`El destino ${publishing.target?.name || "seleccionado"} no tiene webhook n8n configurado`);
+        }
+        const result = await publishPublicationPayload(publishing, "flow-console-scheduler");
+        const status = publicationDeliveryStatus({ ...publishing, action: "publish" }, result);
+        const confirmed = confirmedPublicationStatus(result?.status);
+        Object.assign(publishing, {
+          status,
+          result,
+          publishedAt: confirmed ? (result?.publishedAt || new Date().toISOString()) : null,
+          updatedAt: new Date().toISOString(),
+        });
+        if (publishing.target?.id === "blog" && publishing.publishedAt) {
+          publishing.publicUrl = result?.publicUrl || result?.url || "";
+          publishing.result = {
+            ...(publishing.result || {}),
+            publicUrl: publishing.publicUrl,
+            url: publishing.publicUrl,
+          };
+        }
+        await rememberPublicationInTraining(publishing);
+        if (publishing.publishedAt) await rememberPublishedCalendarTask(publishing).catch(() => {});
+      } catch (error) {
+        Object.assign(publishing, {
+          status: "error",
+          lastError: error.message,
+          updatedAt: new Date().toISOString(),
+        });
+      }
     }
 
-    const publishing = {
-      ...post,
-      status: "publishing",
-      updatedAt: new Date().toISOString(),
-      lastError: null,
-    };
-    nextPosts.push(publishing);
-    changed = true;
-    await writePublicationPosts(nextPosts.concat(posts.slice(nextPosts.length)));
-
-    try {
-      if (!publishing.target?.webhookPath) {
-        throw new Error(`El destino ${publishing.target?.name || "seleccionado"} no tiene webhook n8n configurado`);
-      }
-      const result = await publishPublicationPayload(publishing, "flow-console-scheduler");
-      const status = publicationDeliveryStatus({ ...publishing, action: "publish" }, result);
-      const confirmed = confirmedPublicationStatus(result?.status);
-      Object.assign(publishing, {
-        status,
-        result,
-        publishedAt: confirmed ? (result?.publishedAt || new Date().toISOString()) : null,
-        updatedAt: new Date().toISOString(),
-      });
-      if (publishing.target?.id === "blog" && publishing.publishedAt) {
-        publishing.publicUrl = result?.publicUrl || result?.url || "";
-        publishing.result = {
-          ...(publishing.result || {}),
-          publicUrl: publishing.publicUrl,
-          url: publishing.publicUrl,
-        };
-      }
-      await rememberPublicationInTraining(publishing);
-      if (publishing.publishedAt) await rememberPublishedCalendarTask(publishing).catch(() => {});
-    } catch (error) {
-      Object.assign(publishing, {
-        status: "error",
-        lastError: error.message,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-  }
-
-  if (changed) await writePublicationPosts(nextPosts);
+    if (changed) await writePublicationPosts(nextPosts);
+  });
 }
 
 if (production) {

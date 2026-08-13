@@ -55,7 +55,6 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Abre la gestion de un foro concreto.
 - Edita la configuracion de un foro.
 - Anade nuevos foros.
-- Borra foros.
 - Relanza el workflow del foro si tiene webhook.
 - Copia borradores de respuesta.
 - Genera aviso de oportunidad promocional cuando el karma lo permite.
@@ -87,18 +86,17 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Reposiciona imagen.
 - Ejecuta preflight antes de publicar.
 - Publica o prepara publicaciones segun el canal.
+- Programa una publicacion con fecha y hora.
 - Guarda publicaciones preparadas.
-- Recupera publicaciones guardadas.
-- Reenvia publicaciones.
+- Recupera el borrador local.
+- Lista el historial reciente. No borra posts.
 - Confirma publicaciones como publicadas.
-- Borra publicaciones del historial.
-- Limpia historial de publicaciones.
+- Elige un archivo de la biblioteca del destino.
 
 ### Canales de publicacion
 
 - Publica en blog propio cuando esta configurado.
 - Crea y edita articulos de blog.
-- Borra articulos de blog.
 - Adapta articulos de blog a LinkedIn.
 - Prepara/publica para LinkedIn segun modo configurado.
 - Publica en Pinterest si la API esta configurada.
@@ -113,15 +111,14 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Guarda datos mensuales por canal.
 - Edita publicaciones, impresiones, interacciones y clics por canal.
 - Importa datos de GA4 cuando OAuth esta configurado.
-- Consulta Search Console cuando OAuth esta configurado.
-- Consulta GA4 cuando OAuth esta configurado.
+- Importa datos de Search Console cuando OAuth esta configurado.
 - Resume totales mensuales.
 - Muestra ranking de canales.
 - Guarda URLs UTM/campanas.
 - Copia URLs UTM generadas.
 - Recupera campanas guardadas.
 - Borra campanas guardadas.
-- Comprueba estado de conexion de Google Ads.
+- Comprueba si la API de Google Ads responde. No crea campanas.
 
 ### Cerebro editorial
 
@@ -129,7 +126,7 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Envia uso de memoria al cerebro.
 - Envia feedback de ediciones al cerebro.
 - Envia publicaciones confirmadas al cerebro como aprendizaje.
-- Analiza imagenes de publicaciones con vision cuando hay clave OpenAI.
+- Analiza imagenes de publicaciones con vision cuando hay clave Gemini.
 - Extrae aprendizaje visual: estilo, composicion, tono, presencia de producto y calidad.
 - Envia aprendizajes visuales al cerebro.
 

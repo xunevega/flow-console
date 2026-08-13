@@ -13,6 +13,7 @@ Flow Console
 ├─ Añadir
 ├─ Corregir
 ├─ Publicaciones
+├─ Avisos
 ├─ Estadísticas
 └─ Ads
 ```
@@ -148,7 +149,7 @@ Sirve para:
 - Editar texto con formato.
 - Copiar borrador util, no todo el bloque tecnico.
 - Publicar o preparar segun canal.
-- Editar o borrar articulos de Blog desde Flow Console.
+- Editar articulos de Blog desde Flow Console. No se borran.
 
 Destinos habituales:
 

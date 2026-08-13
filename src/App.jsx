@@ -5,7 +5,7 @@ const GENERATOR_OPTIONS = {
   intencion: ["Crear", "Analizar", "Publicar", "Planificar", "Aprender"],
   objetivo: ["Vender", "Informar", "Enseñar", "Debatir", "Entretener"],
   tono: ["Directo", "Humor", "Polémico"],
-  variantes: [1, 3, 5, 10, 20],
+  variantes: [1, 2, 3],
   materialTipo: ["Texto", "Foto", "Imagen", "PDF", "URL", "Idea"],
 };
 const RAG_TYPES = ["ejemplo_copy", "spec", "nota", "prompt_previo"];
@@ -103,6 +103,21 @@ const GOOGLE_ADS_OBJECTIVES = {
 };
 const GOOGLE_ADS_AUDIENCES = ["PYMEs", "Autónomos", "Gestorías", "SaaS B2B", "Ecommerce", "Operaciones", "Equipos técnicos", "Dirección"];
 const GOOGLE_ADS_NEGATIVES = ["gratis", "curso", "empleo", "plantilla", "pdf", "qué es", "definición"];
+
+function toDatetimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 
 function formatLimit(value) {
   return Number(value || 0).toLocaleString("es-ES");
@@ -618,26 +633,13 @@ function firstUrlInText(value) {
   return String(value || "").match(/https?:\/\/\S+/i)?.[0] || "";
 }
 
-function manualPublicationUrl(target, task) {
-  const explicitUrl = firstUrlInText(task?.notes) || firstUrlInText(target?.handle) || firstUrlInText(target?.webhookPath);
-  if (explicitUrl) return explicitUrl;
-  const value = `${target?.id || ""} ${target?.name || ""} ${task?.title || ""}`.toLowerCase();
-  if (value.includes("linkedin") && /art[ií]culo|article/.test(value)) return "https://www.linkedin.com/pulse/article/new/";
-  if (value.includes("linkedin")) return "https://www.linkedin.com/feed/";
-  if (value.includes("youtube")) return "https://studio.youtube.com/";
-  if (value.includes("tiktok")) return "https://www.tiktok.com/upload";
-  if (value.includes("pinterest")) return "https://www.pinterest.com/pin-builder/";
-  if (value.includes("instagram")) return "https://www.instagram.com/";
-  return "";
-}
-
 function manualPublicationLabel(target, task) {
   const value = `${target?.id || ""} ${target?.name || ""} ${task?.title || ""}`.toLowerCase();
-  if (value.includes("blog")) return "Publicaciones Blog";
-  if (/v[ií]deo|video|short|reel/.test(value)) return "Abrir vídeo";
-  if (/art[ií]culo|article/.test(value)) return "Abrir artículo";
-  if (/pista|idea|nota/.test(value)) return "Abrir pista";
-  return `Abrir ${target?.name || "publicación"}`;
+  if (value.includes("blog")) return "Preparar Blog";
+  if (/v[ií]deo|video|short|reel/.test(value)) return "Preparar vídeo";
+  if (/art[ií]culo|article/.test(value)) return "Preparar artículo";
+  if (/pista|idea|nota/.test(value)) return "Preparar pista";
+  return `Preparar ${target?.name || "publicación"}`;
 }
 
 function workflowRunMessage(result = {}, fallback = "Workflow lanzado desde Flow Console.") {
@@ -816,6 +818,18 @@ function formatStatsNumber(value) {
   return Number(value || 0).toLocaleString("es-ES");
 }
 
+function formatStatsPercent(value) {
+  return `${Number(value || 0).toLocaleString("es-ES", { maximumFractionDigits: 2 })} %`;
+}
+
+function formatStatsSeconds(value) {
+  const seconds = Math.round(Number(value || 0));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds ? `${minutes} min ${remainingSeconds} s` : `${minutes} min`;
+}
+
 function cleanStatsInput(value) {
   return Math.max(0, Math.round(Number(value) || 0));
 }
@@ -869,7 +883,7 @@ function publicationResultMessage(action, post, targetName) {
     return url ? `TikTok preparado para revisar: ${url}` : "TikTok preparado para revisar.";
   }
   if (isConfirmedPublicationStatus(status)) {
-    return url ? `Publicado en ${targetName}: ${url}` : `Publicado en ${targetName}. Aprendido en el cerebro editorial.`;
+    return url ? `Publicado en ${targetName}: ${url}` : `Publicado en ${targetName}.`;
   }
   if (isPublicationAwaitingConfirmation(status)) {
     if (targetId === "youtube") return "YouTube API recibió la solicitud, subida no confirmada.";
@@ -1011,7 +1025,7 @@ function Login({ configured, onLogin }) {
       <form className="login-card" onSubmit={submit}>
         <div className="eyebrow">OPERACIONES PRIVADAS</div>
         <h1>Flow Console</h1>
-        <p>Control privado de workflows y ejecuciones de n8n.</p>
+        <p>Consola privada de calendario, publicaciones, avisos y memoria editorial.</p>
         {!configured && (
           <div className="notice error">
             Faltan variables del servidor. Revisa <code>.env.example</code>.
@@ -1534,6 +1548,9 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", initialPubli
   const selectedPublicationUrl = selected ? forumPublicationUrl(selected, forum) : "";
   const selectedPublicationLabel = selected ? forumPublicationLabel(selected, forum) : "ABRIR FORO";
   const selectedDraftText = selected ? extractDraftText(selected.body) : "";
+  const selectedMatchesInitialNotice = Boolean(selected && (
+    selected.id === initialNoticeId || (selected.groupedNoticeIds || []).includes(initialNoticeId)
+  ));
   const folderCounts = {
     inbox: forumNotices.filter((notice) => !notice.archived && !notice.trashed && notice.status !== "managed").length,
     executed: forumNotices.filter((notice) => notice.status === "managed" && !notice.archived && !notice.trashed).length,
@@ -1561,12 +1578,9 @@ function ForumNoticeManager({ forum, notices, initialNoticeId = "", initialPubli
   }, [visibleNotices]);
 
   useEffect(() => {
-    const selectedMatchesInitial = selected && (
-      selected.id === initialNoticeId || (selected.groupedNoticeIds || []).includes(initialNoticeId)
-    );
-    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesInitial));
+    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesInitialNotice));
     setPublicationDraft(selectedDraftText);
-  }, [initialNoticeId, initialPublicationMode, selected?.id, selectedDraftText]);
+  }, [initialPublicationMode, selectedDraftText, selectedMatchesInitialNotice]);
 
   async function patchNoticeGroup(notice, patch) {
     const ids = notice?.groupedNoticeIds?.length ? notice.groupedNoticeIds : [notice?.id].filter(Boolean);
@@ -1953,7 +1967,7 @@ function ForumHub({ initialWorkflowId = "", initialNoticeId = "", initialPublica
             <input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre del foro" />
           </label>
           <label>
-            Bandeja
+            Avisos
             <select value={draft.workflowId} onChange={(event) => setDraft((current) => ({ ...current, workflowId: event.target.value }))}>
               <option value="">Sin workflow todavía</option>
               {workflows.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}
@@ -2082,14 +2096,14 @@ function Inbox({ refreshToken = 0, selectedNoticeId = "", selectedWorkflowId = "
     notice.id === selectedId || (notice.groupedNoticeIds || []).includes(selectedId)
   ) || null;
   const selectedDraftText = selected ? extractDraftText(selected.body) : "";
+  const selectedMatchesRequestedNotice = Boolean(selected && (
+    selected.id === selectedNoticeId || (selected.groupedNoticeIds || []).includes(selectedNoticeId)
+  ));
 
   useEffect(() => {
-    const selectedMatchesInitial = selected && (
-      selected.id === selectedNoticeId || (selected.groupedNoticeIds || []).includes(selectedNoticeId)
-    );
-    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesInitial));
+    setPublicationMode(Boolean(initialPublicationMode && selectedMatchesRequestedNotice));
     setPublicationDraft(selectedDraftText);
-  }, [initialPublicationMode, selected?.id, selectedDraftText, selectedNoticeId]);
+  }, [initialPublicationMode, selectedDraftText, selectedMatchesRequestedNotice]);
 
   async function patchNoticeGroup(notice, patch) {
     const ids = notice?.groupedNoticeIds?.length ? notice.groupedNoticeIds : [notice?.id].filter(Boolean);
@@ -2515,6 +2529,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
       .flatMap((post) => {
         const scheduled = post.action === "schedule";
         const pendingPublication = post.action === "review" || post.status === "pending_publication";
+        const awaitingConfirmation = isPublicationAwaitingConfirmation(post.status);
         const targetName = post.target?.name || "Publicación";
         const label = publicationStatusLabel(post.status, post.action);
         const fullText = String(post.caption || post.result?.youtube?.title || "").replace(/\s+/g, " ").trim();
@@ -2528,6 +2543,8 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
           actionLabel: pendingPublication ? "Revisar y publicar" : "Abrir publicaciones",
           action: () => onOpenInstagram(post),
           pendingPublication,
+          postId: post.id,
+          awaitingConfirmation,
         };
         const publishEvent = {
           ...baseEvent,
@@ -2834,18 +2851,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
       return;
     }
     const targetId = String(target.id || "").toLowerCase();
-    if (["youtube", "tiktok"].includes(targetId)) {
-      onOpenPublicationTarget?.(targetId, task);
-      return;
-    }
-    if (String(target.id || "").toLowerCase() === "blog") {
-      onOpenPublicationTarget?.("blog", task);
-      await updateTaskStatus(task, "done");
-      return;
-    }
-    const url = manualPublicationUrl(target, task);
-    if (url) window.open(url, "_blank", "noopener,noreferrer");
-    await updateTaskStatus(task, "done");
+    onOpenPublicationTarget?.(targetId || "instagram", task);
   }
 
   async function deleteTask() {
@@ -2933,6 +2939,16 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
       else next.add(signalId);
       return next;
     });
+  }
+
+  async function confirmPublicationPost(postId) {
+    setError("");
+    try {
+      await api(`/publications/posts/${encodeURIComponent(postId)}/confirm`, { method: "POST" });
+      await load();
+    } catch (confirmError) {
+      setError(confirmError.message);
+    }
   }
 
   const selectedTitle = selectedDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
@@ -3023,7 +3039,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
                         {task.notes && <p className="dashboard-task-hint">Pista: {task.notes}</p>}
                         {publicationTarget && (
                           <p className="dashboard-task-help">
-                            {manualPublicationLabel(publicationTarget, task)} abre el destino. Al terminar, pulsa Hecho o Borrar si ya está cerrado.
+                            {manualPublicationLabel(publicationTarget, task)} abre la pantalla de Publicaciones. Al terminar, pulsa Hecho o Borrar si ya está cerrado.
                           </p>
                         )}
                         <footer>
@@ -3097,8 +3113,15 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
                             <button type="button" onClick={() => toggleSignalDetails(event.id)}>{expanded ? "Cerrar info" : "Ampliar"}</button>
                           )}
                           <button type="button" onClick={event.action}>{event.actionLabel || "Gestionar"}</button>
-                          <button type="button" onClick={() => updateSignalStatus(event, "managed")}>Hecho</button>
-                          <button type="button" onClick={() => updateSignalStatus(event, "ignored")}>Borrar</button>
+                          {event.awaitingConfirmation && event.postId && (
+                            <button type="button" onClick={() => confirmPublicationPost(event.postId)}>Confirmar publicado</button>
+                          )}
+                          {!String(event.id || "").startsWith("publication") && (
+                            <>
+                              <button type="button" onClick={() => updateSignalStatus(event, "managed")}>Hecho</button>
+                              <button type="button" onClick={() => updateSignalStatus(event, "ignored")}>Borrar</button>
+                            </>
+                          )}
                         </footer>
                     </div>
                   </article>
@@ -3373,16 +3396,6 @@ function NotesNotebook() {
               Nueva nota
               <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Escribe una nota larga, una idea o un borrador..." />
             </label>
-            {noteImages.length > 0 && (
-              <div className="calendar-note-images draft">
-                {noteImages.map((image) => (
-                  <figure key={image.id}>
-                    <img src={image.url} alt="" />
-                    <button type="button" onClick={() => setNoteImages((current) => current.filter((item) => item.id !== image.id))}>QUITAR</button>
-                  </figure>
-                ))}
-              </div>
-            )}
             <footer>
               <span>{noteDraft.length.toLocaleString("es-ES")} caracteres</span>
               <div className="notebook-editor-actions">
@@ -3393,10 +3406,20 @@ function NotesNotebook() {
                   </label>
                 </div>
                 <Button type="button" kind="primary" disabled={(!noteDraft.trim() && !noteImages.length) || savingNote || uploadingNoteImage} onClick={saveNote}>
-                  {savingNote ? "GUARDANDO..." : "GUARDAR NOTA"}
+                  {savingNote ? "Guardando..." : "Guardar"}
                 </Button>
               </div>
             </footer>
+            {noteImages.length > 0 && (
+              <div className="calendar-note-images draft">
+                {noteImages.map((image) => (
+                  <figure key={image.id}>
+                    <img src={image.url} alt="" />
+                    <button type="button" aria-label="Quitar foto" title="Quitar foto" onClick={() => setNoteImages((current) => current.filter((item) => item.id !== image.id))}>x</button>
+                  </figure>
+                ))}
+              </div>
+            )}
           </article>
 
           <section className="notebook-list">
@@ -3421,7 +3444,7 @@ function NotesNotebook() {
                           {editingNoteImages.map((image) => (
                             <figure key={image.id}>
                               <img src={image.url} alt="" />
-                              <button type="button" onClick={() => setEditingNoteImages((current) => current.filter((item) => item.id !== image.id))}>QUITAR</button>
+                              <button type="button" aria-label="Quitar foto" title="Quitar foto" onClick={() => setEditingNoteImages((current) => current.filter((item) => item.id !== image.id))}>x</button>
                             </figure>
                           ))}
                         </div>
@@ -3461,7 +3484,7 @@ function NotesNotebook() {
                       {editing ? (
                         <>
                           <button type="button" onClick={cancelEditingNote}>Cancelar</button>
-                          <button type="button" onClick={() => updateNote(note.id)} disabled={(!editingNoteDraft.trim() && !editingNoteImages.length) || savingNote || uploadingNoteImage}>Guardar</button>
+                          <button type="button" className="notebook-save-action" onClick={() => updateNote(note.id)} disabled={(!editingNoteDraft.trim() && !editingNoteImages.length) || savingNote || uploadingNoteImage}>Guardar</button>
                         </>
                       ) : (
                         <>
@@ -3503,6 +3526,24 @@ function OptionGroup({ options, value, onChange, multi = false }) {
       })}
     </div>
   );
+}
+
+function memoryReady(status) {
+  return Boolean(status?.ready || status?.live);
+}
+
+function memoryReadyLabel(status) {
+  if (status?.externalBrain && memoryReady(status)) return "CEREBRO ACTIVO";
+  if (status?.externalBrain) return "CEREBRO NO ACTIVO";
+  if (status?.ready) return "RAG n8n ACTIVO";
+  return "SIN CEREBRO";
+}
+
+function generatorSourceLabel(source, brain) {
+  if (source === "editorial-brain" || brain?.wroteText) return "escrito por el cerebro";
+  if (brain?.applied && source === "n8n") return "vía n8n, con instrucción del cerebro";
+  if (source === "n8n") return "vía n8n, sin cerebro";
+  return source ? `vía ${source}` : "";
 }
 
 function RagEntryConsole({ prefill }) {
@@ -3610,7 +3651,9 @@ function RagEntryConsole({ prefill }) {
       setPromptHintsText((result.assessment?.promptHints || result.assessment?.prompt_hints || []).join(", "));
       setAuthorProfileText(result.assessment?.authorProfile || result.assessment?.perfil_autor || result.assessment?.perfil || "");
       setTitle(result.assessment?.resumen || file?.name || text.trim() || "Documento RAG");
-      setMessage("Valoración recibida desde n8n. Revisa antes de enviarlo al cerebro editorial.");
+      setMessage(result.externalBrain
+        ? "Valoración recibida del cerebro editorial. Revisa antes de confirmar la ingesta."
+        : "Valoración recibida de n8n RAG. Revisa antes de confirmar la ingesta.");
     } catch (evaluateError) {
       setError(evaluateError.message);
     } finally {
@@ -3646,7 +3689,9 @@ function RagEntryConsole({ prefill }) {
         }),
       });
       setIngestedDocument(result.document);
-      setMessage("Conocimiento enviado al cerebro editorial: documento, chunks, memoria SQL y pgvector quedan disponibles para Flow Console y otras apps.");
+      setMessage(result.externalBrain
+        ? "Ingesta confirmada en el cerebro editorial."
+        : "Ingesta confirmada en la memoria RAG de n8n.");
     } catch (ingestError) {
       setError(ingestError.message);
     } finally {
@@ -3743,8 +3788,8 @@ function RagEntryConsole({ prefill }) {
             <p>Valora material nuevo y confirma solo cuando etiquetas, temas y utilidad sean correctos. Esto alimenta la memoria compartida.</p>
           </div>
           <div className="rag-header-right">
-            <button type="button" className={`rag-ready ${ragStatus?.ready ? "ready" : "not-ready"}`} onClick={loadRagStatus}>
-              {ragStatus?.ready ? "CEREBRO ACTIVO" : "CEREBRO NO ACTIVO"}
+            <button type="button" className={`rag-ready ${memoryReady(ragStatus) ? "ready" : "not-ready"}`} onClick={loadRagStatus}>
+              {memoryReadyLabel(ragStatus)}
             </button>
             <div className="rag-pipeline">
               <span className={assessment ? "done" : "active"}>1 Valoración</span>
@@ -3754,9 +3799,11 @@ function RagEntryConsole({ prefill }) {
           </div>
         </header>
 
-        {ragStatus && !ragStatus.ready && (
+        {ragStatus && !memoryReady(ragStatus) && (
           <div className="notice error">
-            El cerebro editorial no está activo todavía. Revisa Editorial Brain o el workflow RAG en n8n. {ragStatus.error || ""}
+            {ragStatus.externalBrain
+              ? `El cerebro editorial no responde. ${ragStatus.error || ""}`
+              : `La memoria RAG no está activa. Revisa el workflow RAG en n8n. ${ragStatus.error || ""}`}
           </div>
         )}
 
@@ -4120,6 +4167,88 @@ function RagMemoryCard({ memory, mode = "compact", onRefresh, showHeader = true,
   );
 }
 
+function RagCorrectConsole() {
+  const [memory, setMemory] = useState(null);
+  const [ragStatus, setRagStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const [statusResult, memoryResult] = await Promise.all([
+        api("/rag/status").catch((statusError) => ({ ready: false, error: statusError.message })),
+        api("/rag/memory"),
+      ]);
+      setRagStatus(statusResult);
+      setMemory(memoryResult.memory || memoryResult);
+    } catch (loadError) {
+      setError(loadError.message);
+      setMemory(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function deleteDocument(documentId) {
+    if (!documentId || !window.confirm("¿Retirar esta ingesta de la memoria editorial?")) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api("/rag/memory/clean", {
+        method: "POST",
+        body: JSON.stringify({ action: "delete-document", documentId }),
+      });
+      setMemory(result.memory || result);
+      setMessage("Ingesta retirada de la memoria.");
+    } catch (deleteError) {
+      setError(deleteError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="rag-workspace">
+      <section className="rag-shell">
+        <header className="rag-header">
+          <div>
+            <div className="eyebrow">CEREBRO EDITORIAL</div>
+            <h2>Corregir memoria</h2>
+            <p>Revisa lo que ya está en el cerebro y borra ingestas que no deban pesar. No inventa memoria: lee `/api/rag/memory`.</p>
+          </div>
+          <button type="button" className={`rag-ready ${memoryReady(ragStatus) ? "ready" : "not-ready"}`} onClick={load}>
+            {memoryReadyLabel(ragStatus)}
+          </button>
+        </header>
+        {ragStatus && !memoryReady(ragStatus) && (
+          <div className="notice error">
+            {ragStatus.externalBrain
+              ? `El cerebro editorial no responde. ${ragStatus.error || ""}`
+              : `La memoria RAG no está activa. Revisa el workflow RAG en n8n. ${ragStatus.error || ""}`}
+          </div>
+        )}
+        {(message || error) && (
+          <div className={`instagram-status ${error ? "error" : "success"}`}>
+            <StatusMessage value={error || message} />
+          </div>
+        )}
+        <RagMemoryCard
+          memory={memory}
+          mode="full"
+          onRefresh={load}
+          onDeleteDocument={deleteDocument}
+          busy={busy}
+        />
+      </section>
+    </main>
+  );
+}
+
 function LearningFlow({ active = "add" }) {
   const steps = [
     {
@@ -4135,7 +4264,7 @@ function LearningFlow({ active = "add" }) {
     {
       id: "generate",
       title: "Generar",
-      detail: "El generador usa solo la memoria útil para crear publicaciones y artículos.",
+      detail: "El generador usa el cerebro si está vivo y aporta; si no hay cerebro, n8n, y se dice cuál fue.",
     },
   ];
   return (
@@ -4163,6 +4292,7 @@ function FormattedTextarea({
 }) {
   const editorRef = useRef(null);
   const imageInputRef = useRef(null);
+  const selectionRangeRef = useRef(null);
   const lastPlainValueRef = useRef("");
   const lastHtmlValueRef = useRef("");
 
@@ -4183,6 +4313,28 @@ function FormattedTextarea({
 
   function readPlainText() {
     return readPlainTextFromEditor(editorRef.current);
+  }
+
+  function selectionBelongsToEditor(range) {
+    const editor = editorRef.current;
+    if (!editor || !range) return false;
+    return editor.contains(range.commonAncestorContainer);
+  }
+
+  function rememberSelection() {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (selectionBelongsToEditor(range)) selectionRangeRef.current = range.cloneRange();
+  }
+
+  function restoreSelection() {
+    const range = selectionRangeRef.current;
+    if (!selectionBelongsToEditor(range)) return false;
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
   }
 
   function moveCaretToEnd() {
@@ -4214,14 +4366,47 @@ function FormattedTextarea({
     onHtmlChange?.(lastHtmlValueRef.current);
   }
 
+  function normalizeLinkUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      return new URL(raw).href;
+    } catch {
+      try {
+        return new URL(`https://${raw}`).href;
+      } catch {
+        return "";
+      }
+    }
+  }
+
+  function applyLink() {
+    editorRef.current?.focus();
+    restoreSelection();
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() || "";
+    if (!selectedText) {
+      alert("Selecciona primero el texto que quieres convertir en enlace.");
+      return;
+    }
+    const href = normalizeLinkUrl(prompt("Pega el enlace") || "");
+    if (!href) return;
+    editorRef.current?.focus();
+    restoreSelection();
+    document.execCommand("createLink", false, href);
+    emitPlainText();
+  }
+
   function formatSelection(command, commandValue = null) {
     editorRef.current?.focus();
+    restoreSelection();
     document.execCommand(command, false, commandValue);
     emitPlainText();
   }
 
   function applyFontSize(size) {
     editorRef.current?.focus();
+    restoreSelection();
     document.execCommand("fontSize", false, "7");
     const editor = editorRef.current;
     editor?.querySelectorAll("font[size='7']").forEach((node) => {
@@ -4235,6 +4420,7 @@ function FormattedTextarea({
 
   function insertDivider() {
     editorRef.current?.focus();
+    restoreSelection();
     document.execCommand("insertHTML", false, "<hr><div><br></div>");
     emitPlainText();
   }
@@ -4250,6 +4436,7 @@ function FormattedTextarea({
       const src = String(reader.result || "");
       const alt = escapeHtml(file.name.replace(/\.[^.]+$/, "").slice(0, 120));
       editorRef.current?.focus();
+      restoreSelection();
       document.execCommand(
         "insertHTML",
         false,
@@ -4289,6 +4476,21 @@ function FormattedTextarea({
           <button type="button" title="Cursiva" onClick={() => formatSelection("italic")}><i>I</i></button>
           <button type="button" title="Subrayado" onClick={() => formatSelection("underline")}><u>U</u></button>
           <button type="button" title="Tachado" onClick={() => formatSelection("strikeThrough")}><s>S</s></button>
+          <button
+            type="button"
+            className="caption-link-button"
+            title="Insertar enlace"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              rememberSelection();
+            }}
+            onClick={applyLink}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M10.6 13.4a4 4 0 0 0 5.7 0l2.1-2.1a4 4 0 0 0-5.7-5.7l-1.2 1.2" />
+              <path d="M13.4 10.6a4 4 0 0 0-5.7 0l-2.1 2.1a4 4 0 0 0 5.7 5.7l1.2-1.2" />
+            </svg>
+          </button>
           <button type="button" title="Fuente normal" onClick={() => applyFontSize(16)}>A</button>
           <button type="button" title="Fuente grande" onClick={() => applyFontSize(20)}>A+</button>
           <button type="button" title="Fuente muy grande" onClick={() => applyFontSize(24)}>A++</button>
@@ -4324,6 +4526,9 @@ function FormattedTextarea({
         data-placeholder={placeholder}
         style={{ minHeight: `${Math.max(120, Number(rows || 6) * 28)}px` }}
         onInput={emitPlainText}
+        onKeyUp={rememberSelection}
+        onMouseUp={rememberSelection}
+        onFocus={rememberSelection}
         onPaste={pasteFormattedText}
         suppressContentEditableWarning
       />
@@ -4535,13 +4740,13 @@ function publicationLearningSignals(post) {
   ].filter(Boolean).slice(0, 5);
 }
 
-function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
+function Generator({ embedded = false, onBack, onUseText, targetFormat = "", targetId = "", seedText = "" }) {
   const [form, setForm] = useState({
     intencion: "Crear",
     formato: targetFormat || "Publicación",
     objetivo: "Vender",
     tono: "Directo",
-    variantes: 5,
+    variantes: 3,
     materialTipo: "Texto",
     material: "",
     analisis: [],
@@ -4558,6 +4763,9 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
   const [generationMemory, setGenerationMemory] = useState(null);
   const [materialFile, setMaterialFile] = useState(null);
   const [materialFilePayload, setMaterialFilePayload] = useState(null);
+  const [generatorStatus, setGeneratorStatus] = useState(null);
+  const [resultSource, setResultSource] = useState("");
+  const [brainReport, setBrainReport] = useState(null);
 
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -4628,26 +4836,38 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
     api("/rag/memory")
       .then((result) => setRagMemory(result.memory || null))
       .catch(() => setRagMemory(null));
+    api("/generator/status")
+      .then(setGeneratorStatus)
+      .catch(() => setGeneratorStatus({ brain: false, brainLive: false, configured: false, n8n: false }));
   }, []);
 
   async function generate(event) {
     event.preventDefault();
-    if (!form.material.trim()) return;
+    const material = form.material.trim() || String(seedText || "").trim();
+    if (!material && !materialFilePayload) return;
     setBusy(true);
     setError("");
     setMessage("");
     setResults([]);
     setGenerationMemory(null);
+    setResultSource("");
+    setBrainReport(null);
     try {
       const response = await api("/generator", {
         method: "POST",
         body: JSON.stringify({
           ...form,
+          material: material || form.material,
           materialFile: materialFilePayload,
+          destino: targetFormat,
+          targetId,
+          currentCaption: seedText || "",
         }),
       });
-      if (!Array.isArray(response.variantes)) throw new Error("n8n no devolvió variantes");
+      if (!Array.isArray(response.variantes)) throw new Error("No se devolvieron variantes de texto");
       setResults(normalizeGeneratedVariants(response.variantes).map((text) => ({ original: text, edited: text })));
+      setResultSource(String(response.source || ""));
+      setBrainReport(response.editorial_brain || null);
       if (response.rag_memory) setRagMemory(response.rag_memory);
       if (response.rag_memory) setGenerationMemory(response.rag_memory);
     } catch (generationError) {
@@ -4655,6 +4875,20 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function loadEditorText() {
+    const next = String(seedText || "").trim();
+    if (!next) {
+      setError("No hay texto en el editor de publicación.");
+      return;
+    }
+    set("materialTipo", "Texto");
+    setMaterialFile(null);
+    setMaterialFilePayload(null);
+    set("material", next.slice(0, 20000));
+    setError("");
+    setMessage("Texto del editor cargado para reescribirlo.");
   }
 
   async function copy(text, index) {
@@ -4667,6 +4901,16 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
     setResults((current) => current.map((result, itemIndex) =>
       itemIndex === index ? { ...result, edited: value } : result,
     ));
+  }
+
+  function queueLookupResult(result) {
+    const queuedText = formatLookupResultForMaterial(result);
+    if (!queuedText) return;
+    set("materialTipo", "Texto");
+    setMaterialFile(null);
+    setMaterialFilePayload(null);
+    set("material", [form.material.trim(), queuedText].filter(Boolean).join("\n\n---\n\n").slice(0, 20000));
+    setMessage("Búsqueda añadida al material del generador.");
   }
 
 	  async function learnEdit(result, index) {
@@ -4689,8 +4933,12 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
       }
       setLearned(index);
 	      setMessage(original === edited
-	        ? "Versión final aprendida en el cerebro editorial. Las próximas generaciones la usarán como patrón preferido."
-	        : "Edición aprendida en el cerebro editorial. Las próximas generaciones usarán esa corrección como preferencia.");
+	        ? (response.externalBrain
+              ? "Versión final aprendida en el cerebro editorial."
+              : "Versión final guardada en la memoria local.")
+	        : (response.externalBrain
+              ? "Edición aprendida en el cerebro editorial."
+              : "Edición guardada en la memoria local."));
       setTimeout(() => setLearned(null), 1600);
     } catch (feedbackError) {
       setError(feedbackError.message);
@@ -4698,7 +4946,8 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
   }
 
   const fileMaterial = ["Imagen", "Foto", "PDF"].includes(form.materialTipo);
-  const generatorDisabled = busy || (fileMaterial ? !materialFilePayload : !form.material.trim());
+  const hasMaterial = fileMaterial ? Boolean(materialFilePayload) : Boolean(form.material.trim() || String(seedText || "").trim());
+  const generatorDisabled = busy || !hasMaterial;
   const GeneratorWrapper = embedded ? "div" : "main";
   const generatedHashtags = hashtagsFromGeneratedResults(results.map(editableResultValue), form);
 
@@ -4707,33 +4956,39 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
       <section className="generator-shell">
         <header className="generator-header">
           <div>
-            <div className="eyebrow">PUBLICACIONES</div>
-            <h2>Generador de texto para contenido</h2>
+            <div className="eyebrow">CEREBRO EDITORIAL</div>
+            <h2>Texto para esta publicación</h2>
+            <p>
+              {generatorStatus?.brain
+                ? "El cerebro tiene que escribir o orientar de verdad. Si no aporta texto ni memoria, no se genera."
+                : generatorStatus?.configured
+                  ? "Editorial Brain está configurado pero no responde. No se finge generación con cerebro."
+                  : "Sin cerebro. Si hay n8n, genera por n8n y se dice."}
+            </p>
           </div>
+          <button
+            type="button"
+            className={`rag-ready ${generatorStatus?.brain ? "ready" : "not-ready"}`}
+            onClick={() => api("/generator/status").then(setGeneratorStatus).catch(() => {})}
+          >
+            {generatorStatus?.brain ? "CEREBRO ACTIVO" : generatorStatus?.configured ? "CEREBRO NO RESPONDE" : "SIN CEREBRO"}
+          </button>
           {embedded && onBack && (
             <Button type="button" onClick={onBack}>← PUBLICACIONES</Button>
           )}
         </header>
+        {generatorStatus?.configured && !generatorStatus?.brain && (
+          <div className="notice error">
+            Editorial Brain está configurado pero no responde. {generatorStatus.error || ""} No se finge texto con cerebro.
+          </div>
+        )}
 
         <div className="generator-layout">
           <form className="generator-form panel" onSubmit={generate}>
+            <Last30DaysLookupPanel className="generator-lookup-panel" onQueueResult={queueLookupResult} />
             <div className="generator-field">
-              <label>Intención</label>
-              <OptionGroup options={GENERATOR_OPTIONS.intencion} value={form.intencion} onChange={(value) => set("intencion", value)} />
-            </div>
-            <div className="generator-field">
-              <label>Objetivo</label>
-              <OptionGroup options={GENERATOR_OPTIONS.objetivo} value={form.objetivo} onChange={(value) => set("objetivo", value)} />
-            </div>
-            <div className="generator-field split">
-              <div>
-                <label>Tono</label>
-                <OptionGroup options={GENERATOR_OPTIONS.tono} value={form.tono} onChange={(value) => set("tono", value)} />
-              </div>
-              <div>
-                <label>Variantes</label>
-                <OptionGroup options={GENERATOR_OPTIONS.variantes} value={form.variantes} onChange={(value) => set("variantes", value)} />
-              </div>
+              <label>Variables</label>
+              <OptionGroup options={GENERATOR_OPTIONS.variantes} value={form.variantes} onChange={(value) => set("variantes", value)} />
             </div>
             <div className="generator-field">
               <label>Material</label>
@@ -4785,13 +5040,19 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
               />
             </div>
             <Button kind="primary" className="generator-submit" disabled={generatorDisabled}>
-              {busy ? "GENERANDO EN N8N..." : `GENERAR ${form.variantes} VARIANTE${form.variantes > 1 ? "S" : ""}`}
+              {busy ? "GENERANDO..." : `GENERAR ${form.variantes} VARIANTE${form.variantes > 1 ? "S" : ""}`}
             </Button>
+            {embedded && (
+              <Button type="button" disabled={!String(seedText || "").trim() || busy} onClick={loadEditorText}>
+                USAR TEXTO DEL EDITOR
+              </Button>
+            )}
           </form>
 
           <section className="generator-results">
             <div className="generator-results-heading">
               <h3>Texto generado</h3>
+              {resultSource ? <small>{generatorSourceLabel(resultSource, brainReport)}</small> : null}
             </div>
             <div className="generated-hashtags-panel">
               <label>Hashtags generados</label>
@@ -4801,11 +5062,23 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
             </div>
             {error && <div className="notice error">{error}</div>}
             {message && <div className="notice success">{message}</div>}
-            {busy && <div className="generator-empty">n8n está analizando, pensando y generando.</div>}
+            {busy && (
+              <div className="generator-empty">
+                {generatorStatus?.brain ? "El cerebro editorial está trabajando." : "n8n está generando el texto. El cerebro no participa."}
+              </div>
+            )}
             {!busy && !error && !results.length && (
               <div className="generator-empty">
-                <strong>Texto generado</strong>
-                <Button type="button" disabled>COPIAR</Button>
+                <strong>Sin variantes todavía.</strong>
+                <span>
+                  {generatorStatus?.brain
+                    ? "Pega material o usa el texto del editor. El cerebro tiene que aportar texto o memoria; si no, verás el error."
+                    : generatorStatus?.configured
+                      ? "El cerebro no responde. No se genera como si estuviera activo."
+                      : generatorStatus?.n8n
+                        ? "Sin cerebro. Genera con n8n y se etiquetará como n8n."
+                        : "Falta cerebro y n8n. No hay de dónde sacar texto."}
+                </span>
               </div>
             )}
             {results.map((result, index) => (
@@ -4848,7 +5121,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
               </article>
             ))}
             {!busy && !error && results.length > 0 && (
-              <GeneratorWhy memory={generationMemory || ragMemory} form={form} />
+            <GeneratorWhy memory={generationMemory || ragMemory} brain={brainReport} />
             )}
           </section>
         </div>
@@ -4857,7 +5130,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "" }) {
   );
 }
 
-function GeneratorWhy({ memory, form }) {
+function GeneratorWhy({ memory, brain }) {
   const tags = memory?.tags || [];
   const topics = memory?.topics || [];
   const styleTags = memory?.styleTags || [];
@@ -4869,15 +5142,19 @@ function GeneratorWhy({ memory, form }) {
     styleTags.length ? { label: "Estilo disponible", value: styleTags.slice(0, 6).join(" · ") } : null,
     promptHints.length ? { label: "Pistas de prompt", value: promptHints.slice(0, 4).join(" · ") } : null,
     recent.length ? { label: "Memoria reciente", value: recent.slice(0, 3).map((item) => item.title).join(" · ") } : null,
+    brain?.wroteText ? { label: "Cerebro", value: "Escribió el texto." } : null,
+    brain?.applied && !brain?.wroteText ? {
+      label: "Cerebro",
+      value: brain.documentCount
+        ? `Orientó n8n con memoria (${brain.documentCount} ingestas).`
+        : "Orientó n8n con instrucción. No escribió el texto.",
+    } : null,
+    brain && !brain.applied ? { label: "Cerebro", value: "No participó en esta generación." } : null,
   ].filter(Boolean);
 	return (
 	  <details className="generator-why">
-	    <summary>Memoria enviada al generador</summary>
+	    <summary>Qué se usó de verdad</summary>
       <div>
-        <article>
-          <strong>Intención usada</strong>
-          <p>{form.intencion} · {form.formato} · {form.objetivo} · {form.tono}</p>
-        </article>
         {used.length ? used.map((item) => (
           <article key={item.label}>
             <strong>{item.label}</strong>
@@ -4885,13 +5162,19 @@ function GeneratorWhy({ memory, form }) {
           </article>
         )) : (
           <article>
-            <strong>Cerebro editorial</strong>
-            <p>No había memoria confirmada aplicable en esta generación.</p>
+            <strong>Sin memoria ni cerebro</strong>
+            <p>Esta generación no usó cerebro ni memoria confirmada.</p>
           </article>
         )}
 	    <article>
 	      <strong>Límite</strong>
-	      <p>Esto es la memoria global disponible que viajó a n8n; no afirma que cada etiqueta haya influido en la respuesta final.</p>
+	      <p>
+            {brain?.wroteText
+              ? "El texto lo escribió el cerebro editorial."
+              : brain?.applied
+                ? "n8n escribió el texto usando la instrucción o memoria del cerebro. No afirma que cada etiqueta haya influido."
+                : "n8n escribió el texto. El cerebro no participó."}
+          </p>
 	    </article>
       </div>
     </details>
@@ -4921,7 +5204,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const [publicationScheduledAt, setPublicationScheduledAt] = useState("");
   const [linkedinMode, setLinkedinMode] = useState("post");
   const [tiktokMode, setTiktokMode] = useState("draft");
-  const [, setPosts] = useState([]);
+  const [posts, setPosts] = useState([]);
+  const [libraryItems, setLibraryItems] = useState([]);
   const [savedDraft, setSavedDraft] = useState(readPublicationDraft);
   const [blogArticles, setBlogArticles] = useState([]);
   const [blogArticleDraft, setBlogArticleDraft] = useState({
@@ -4981,7 +5265,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     setImageUrl(nextMediaUrl);
     setMediaSource(null);
     setMediaAspect("original");
-    setPublicationScheduledAt(String(draftCaption.scheduledAt || ""));
+    setPublicationScheduledAt(toDatetimeLocalValue(draftCaption.scheduledAt || draftCaption.publicationScheduledAt || ""));
     setLinkedinMode(draftCaption.linkedinMode || draftCaption.options?.linkedinMode || "post");
     setTiktokMode(draftCaption.tiktokMode || draftCaption.options?.tiktokMode || "draft");
     setSelectedTargetId(draftCaption.targetId || draftCaption.target?.id || "instagram");
@@ -5022,6 +5306,13 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   useEffect(() => {
     if (publisherScreen === "editor" && ["blog", "linkedin"].includes(selectedTargetId)) loadBlogArticles();
   }, [loadBlogArticles, publisherScreen, selectedTargetId]);
+
+  useEffect(() => {
+    if (publisherScreen !== "editor") return;
+    api(`/publications/library?target=${encodeURIComponent(selectedTarget.id)}`)
+      .then((result) => setLibraryItems(Array.isArray(result.items) ? result.items : []))
+      .catch(() => setLibraryItems([]));
+  }, [publisherScreen, selectedTarget.id]);
 
   useEffect(() => {
     if (publisherScreen !== "editor" || !selectedTarget?.id) return;
@@ -5253,28 +5544,18 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     }
   }
 
-  async function deleteBlogArticle(slug, title = "") {
-    if (!slug || !window.confirm(`Borrar artículo "${title || slug}"?`)) return;
-    setBusy(`blog-delete-${slug}`);
-    setError("");
-    setMessage("");
-    try {
-      await api(`/blog/articles/${encodeURIComponent(slug)}`, { method: "DELETE" });
-      await loadBlogArticles();
-      if (blogArticleDraft.slug === slug) {
-        setBlogArticleDraft((current) => ({ ...current, slug: "" }));
-      }
-      setMessage("Artículo borrado del blog.");
-    } catch (deleteError) {
-      setError(deleteError.message);
-    } finally {
-      setBusy("");
-    }
-  }
-
   async function submit(action, options = {}) {
     const busyKey = options.busyKey || action;
     const mediaUrl = imageUrl;
+    const scheduledAt = action === "schedule" ? fromDatetimeLocalValue(publicationScheduledAt) : null;
+    if (action === "schedule" && !scheduledAt) {
+      setError("Elige fecha y hora para programar.");
+      return;
+    }
+    if (action === "schedule" && new Date(scheduledAt).getTime() <= Date.now()) {
+      setError("La programación tiene que ser futura.");
+      return;
+    }
     setBusy(busyKey);
     setError("");
     setMessage("");
@@ -5292,7 +5573,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           location: "",
           tag: "",
           audience: "public",
-          scheduledAt: null,
+          scheduledAt,
           force: Boolean(options.force),
           options: {
             hideLikes: false,
@@ -5306,7 +5587,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           },
         }),
       });
-	      setPosts((current) => [result.post, ...current].slice(0, 8));
+	      setPosts((current) => [result.post, ...current.filter((post) => post.id !== result.post.id)].slice(0, 50));
 	      onPublicationSaved?.();
 	      const learnedSignals = result.memory ? publicationLearningSignals(result.post) : [];
 	      setMessage([
@@ -5315,6 +5596,22 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
 	      ].filter(Boolean).join(" "));
 	    } catch (submitError) {
       setError(submitError.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function confirmPublication(postId) {
+    setBusy("confirm");
+    setError("");
+    setMessage("");
+    try {
+      const result = await api(`/publications/posts/${encodeURIComponent(postId)}/confirm`, { method: "POST" });
+      setPosts((current) => current.map((post) => post.id === postId ? result.post : post));
+      onPublicationSaved?.();
+      setMessage("Publicación confirmada.");
+    } catch (confirmError) {
+      setError(confirmError.message);
     } finally {
       setBusy("");
     }
@@ -5468,7 +5765,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           <div>
             <div className="eyebrow">PUBLICACIONES</div>
             <h2>Publicaciones</h2>
-            <p>Programa publicaciones, prepara archivos y abre cada destino cuando toque componer.</p>
+            <p>Publica ahora, programa una hora o confirma una entrega pendiente. El historial de esta pantalla no borra posts.</p>
           </div>
           {publisherScreen === "editor" && (
             <span className="generator-route">{selectedTarget.name}</span>
@@ -5562,6 +5859,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
               <Generator
                 embedded
                 targetFormat={selectedTarget.name}
+                targetId={selectedTarget.id}
+                seedText={caption}
                 onUseText={(value) => {
                   const nextText = typeof value === "object" && value !== null ? value.text : value;
                   const nextHtml = typeof value === "object" && value !== null ? value.html : "";
@@ -5639,6 +5938,31 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                 )}
                 <div className="publication-media-actions">
                   {publicationMediaActions({ failed: mediaLoadFailed })}
+                </div>
+                <div className="publication-library">
+                  <strong>Biblioteca</strong>
+                  {libraryItems.length ? (
+                    <div className="publication-library-list">
+                      {libraryItems.slice(0, 12).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={imageUrl === item.url ? "active" : ""}
+                          onClick={() => {
+                            setImageUrl(item.url);
+                            setMediaSource(null);
+                            setMediaLoadFailed(false);
+                          }}
+                        >
+                          {item.kind === "image"
+                            ? <img src={item.url} alt={item.name} />
+                            : <span>{item.name}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>Sin archivos en la biblioteca de este destino.</p>
+                  )}
                 </div>
                 {imageUrl && (
                   <>
@@ -5754,7 +6078,6 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                           </div>
                           <a href={`https://aeternal-flow.es/blog.php?post=${encodeURIComponent(article.slug)}`} target="_blank" rel="noreferrer">Abrir</a>
                           <button type="button" onClick={() => editBlogArticle(article)} disabled={Boolean(busy)}>Editar</button>
-                          <button type="button" className="danger" onClick={() => deleteBlogArticle(article.slug, article.title)} disabled={Boolean(busy)}>Borrar</button>
                         </article>
                       )) : (
                         <p>Sin artículos cargados.</p>
@@ -5796,6 +6119,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                         <article key={check.id} className={check.level}>
                           <strong>{check.label}</strong>
                           {check.detail ? <p>{check.detail}</p> : null}
+                          {check.id === "youtube" && check.level === "block" && (
+                            <a href="/oauth/youtube/start">Autorizar YouTube</a>
+                          )}
                         </article>
                       ))}
                     </div>
@@ -5803,6 +6129,14 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                 ) : null}
 
                 <div className="instagram-actions panel">
+                  <label className="publication-schedule-field">
+                    Programar
+                    <input
+                      type="datetime-local"
+                      value={publicationScheduledAt}
+                      onChange={(event) => setPublicationScheduledAt(event.target.value)}
+                    />
+                  </label>
                   {selectedTarget.id === "blog" && blogArticleDraft.slug ? (
                     <Button type="button" kind="primary" disabled={Boolean(busy) || !blogArticleDraft.title.trim() || !caption.trim()} onClick={saveBlogArticleEdit}>
                       {busy === "blog-save" ? "GUARDANDO..." : "GUARDAR CAMBIOS BLOG"}
@@ -5810,6 +6144,13 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                   ) : null}
                   <Button type="button" disabled={!caption.trim() && !imageUrl} onClick={saveWorkspaceDraft}>
                     GUARDAR BORRADOR
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={disabled || !selectedTarget.webhookPath || targetPending || preflightBlocked || !publicationScheduledAt || busy === "schedule"}
+                    onClick={() => submit("schedule")}
+                  >
+                    {busy === "schedule" ? "PROGRAMANDO..." : "PROGRAMAR"}
                   </Button>
                   <Button
                     type="button"
@@ -5823,6 +6164,32 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                   </Button>
                   <Button type="button" onClick={reset}>LIMPIAR</Button>
                 </div>
+                <section className="instagram-history panel">
+                  <div className="panel-heading compact">
+                    <div><span className="section-mark" />Historial reciente</div>
+                    <span>Sin borrar posts</span>
+                  </div>
+                  {posts.length ? posts.slice(0, 12).map((post) => (
+                    <article key={post.id}>
+                      <header>
+                        <div>
+                          <strong>{post.target?.name || post.targetId || "Destino"}</strong>
+                          <span>{publicationStatusLabel(post.status, post.action)} · {new Date(post.scheduledAt || post.publishedAt || post.createdAt || Date.now()).toLocaleString("es-ES")}</span>
+                        </div>
+                        <div className="history-row-actions">
+                          {isPublicationAwaitingConfirmation(post.status) && (
+                            <button type="button" disabled={Boolean(busy)} onClick={() => confirmPublication(post.id)}>
+                              {busy === "confirm" ? "..." : "Confirmar"}
+                            </button>
+                          )}
+                        </div>
+                      </header>
+                      {post.caption ? <p className="draft-snippet">{post.caption}</p> : null}
+                    </article>
+                  )) : (
+                    <p>Aún no hay entregas registradas.</p>
+                  )}
+                </section>
 
               </section>
             </div>
@@ -5944,6 +6311,125 @@ function statsRowsForMonth(entries, year, month, campaigns = []) {
   return statsRowsWithCampaignChannels(rows, campaigns);
 }
 
+function last30DaysDisplayValue(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value, null, 2);
+}
+
+function formatLookupResultForMaterial(result = {}) {
+  const items = Array.isArray(result.items) ? result.items : [];
+  return [
+    `Búsqueda externa: ${result.keyword || result.query || "consulta"}`,
+    result.label ? `Label: ${result.label}` : "",
+    result.text ? `Resumen: ${result.text}` : "",
+    items.length ? "Resultados:" : "",
+    ...items.slice(0, 8).map((item, index) => [
+      `${index + 1}. ${item.title || item.url || "Resultado"}`,
+      item.summary ? `   ${item.summary}` : "",
+      item.url ? `   ${item.url}` : "",
+    ].filter(Boolean).join("\n")),
+  ].filter(Boolean).join("\n");
+}
+
+function Last30DaysLookupPanel({ className = "", onQueueResult }) {
+  const [keyword, setKeyword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function lookup() {
+    const cleanKeyword = keyword.trim();
+    if (!cleanKeyword) {
+      setError("Escribe una palabra o una instrucción para consultar");
+      return;
+    }
+    setLoading(true);
+    setResult(null);
+    setError("");
+    setMessage("");
+    try {
+      const response = await api("/claude/last30days", {
+        method: "POST",
+        body: JSON.stringify({ keyword: cleanKeyword }),
+      });
+      setResult(response);
+      setMessage(`Consulta lista para "${response.keyword || cleanKeyword}"`);
+    } catch (lookupError) {
+      setError(lookupError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function addResultToMaterial() {
+    if (!result) return;
+    onQueueResult?.(result);
+    setMessage(`Resultado añadido al material para "${result.keyword || keyword.trim()}"`);
+  }
+
+  return (
+    <section className={`last30days-panel ${className}`}>
+      <div className="panel-heading">
+        <span className="section-mark blue" />
+        <div>
+          <strong>Búsqueda para label</strong>
+          <small>n8n pregunta a Claude con la palabra indicada</small>
+        </div>
+        <Button type="button" kind="primary" disabled={loading} onClick={lookup}>
+          {loading ? "CONSULTANDO..." : "CONSULTAR"}
+        </Button>
+      </div>
+      <label className="last30days-field">
+        Palabra
+        <input
+          value={keyword}
+          onChange={(event) => setKeyword(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              lookup();
+            }
+          }}
+          placeholder="por ejemplo últimos 30 días"
+        />
+      </label>
+      {(error || message) && (
+        <div className={error ? "publication-feedback error" : "publication-feedback success"}>
+          <span>{error || message}</span>
+        </div>
+      )}
+      {result && (
+        <div className="last30days-result">
+          <header>
+            <strong>{result.label || result.keyword}</strong>
+            <span>{result.provider || result.source || "n8n"} · {result.receivedAt ? relativeTime(result.receivedAt) : "recibido"}</span>
+          </header>
+          <Button type="button" onClick={addResultToMaterial}>AÑADIR A MATERIAL</Button>
+          {result.text && result.text !== result.label && <p>{result.text}</p>}
+          {Array.isArray(result.items) && result.items.length > 0 && (
+            <div className="last30days-items">
+              {result.items.map((item, index) => (
+                <article key={`${result.keyword}-${index}`}>
+                  <strong>{item.title || item.url || `Resultado ${index + 1}`}</strong>
+                  {item.summary && <p>{item.summary}</p>}
+                  <span>{[item.source, item.publishedAt, item.language || item.country].filter(Boolean).join(" · ")}</span>
+                  {item.url && <a href={item.url} target="_blank" rel="noreferrer">Abrir resultado</a>}
+                </article>
+              ))}
+            </div>
+          )}
+          {!result.text && result.raw && (
+            <pre>{last30DaysDisplayValue(result.raw)}</pre>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function sumStatsRows(rows) {
   return rows.reduce((totals, row) => ({
     publications: totals.publications + cleanStatsInput(row.publications),
@@ -5953,25 +6439,121 @@ function sumStatsRows(rows) {
   }), { publications: 0, impressions: 0, interactions: 0, clicks: 0 });
 }
 
-function percentStat(part, total) {
-  const denominator = cleanStatsInput(total);
-  if (!denominator) return "0%";
-  return `${Math.round((cleanStatsInput(part) / denominator) * 100)}%`;
+function datesBetween(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+  const dates = [];
+  for (let cursor = start; cursor <= end; cursor = new Date(cursor.getTime() + 86400000)) {
+    dates.push(cursor.toISOString().slice(0, 10));
+  }
+  return dates;
 }
 
-function topStatsRows(rows, metric = "clicks", limit = 6) {
-  return (Array.isArray(rows) ? rows : [])
-    .filter((row) => String(row.channel || "").trim())
-    .map((row) => ({
-      ...row,
-      publications: cleanStatsInput(row.publications),
-      impressions: cleanStatsInput(row.impressions),
-      interactions: cleanStatsInput(row.interactions),
-      clicks: cleanStatsInput(row.clicks),
-    }))
-    .filter((row) => row.publications || row.impressions || row.interactions || row.clicks)
-    .sort((left, right) => cleanStatsInput(right[metric]) - cleanStatsInput(left[metric]) || cleanStatsInput(right.clicks) - cleanStatsInput(left.clicks))
-    .slice(0, limit);
+function shortDateLabel(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("es-ES", { day: "2-digit", month: "short", timeZone: "UTC" }).replace(".", "");
+}
+
+function buildGa4TrafficChartData(stats) {
+  const seriesRows = Array.isArray(stats?.trafficSeries) ? stats.trafficSeries : [];
+  const dates = datesBetween(stats?.startDate, stats?.endDate);
+  if (!seriesRows.length || !dates.length) return null;
+  const totalsBySource = new Map();
+  for (const row of seriesRows) {
+    const sourceMedium = row.sourceMedium || `${row.source || ""} / ${row.medium || ""}`;
+    totalsBySource.set(sourceMedium, (totalsBySource.get(sourceMedium) || 0) + cleanStatsInput(row.sessions));
+  }
+  const topSources = [...totalsBySource.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "es", { sensitivity: "base" }))
+    .slice(0, 5)
+    .map(([source]) => source);
+  const totalByDate = new Map(dates.map((date) => [date, 0]));
+  const sourceDateMap = new Map(topSources.map((source) => [source, new Map(dates.map((date) => [date, 0]))]));
+  for (const row of seriesRows) {
+    const sessions = cleanStatsInput(row.sessions);
+    totalByDate.set(row.date, (totalByDate.get(row.date) || 0) + sessions);
+    const sourceMedium = row.sourceMedium || `${row.source || ""} / ${row.medium || ""}`;
+    const dateMap = sourceDateMap.get(sourceMedium);
+    if (dateMap) dateMap.set(row.date, (dateMap.get(row.date) || 0) + sessions);
+  }
+  const lines = [
+    {
+      key: "Total",
+      label: "Total",
+      color: "#0b85c4",
+      values: dates.map((date) => totalByDate.get(date) || 0),
+      dashed: true,
+    },
+    ...topSources.map((source, index) => ({
+      key: source,
+      label: source,
+      color: ["#2774dd", "#7ac143", "#e42d90", "#f2b705", "#4858b8"][index] || "#4a7ab5",
+      values: dates.map((date) => sourceDateMap.get(source)?.get(date) || 0),
+    })),
+  ];
+  return { dates, lines, maxValue: Math.max(1, ...lines.flatMap((line) => line.values)) };
+}
+
+function Ga4TrafficChart({ stats }) {
+  const chart = buildGa4TrafficChartData(stats);
+  if (!chart) return null;
+  const width = 960;
+  const height = 330;
+  const padding = { top: 24, right: 36, bottom: 56, left: 32 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const xFor = (index) => padding.left + (chart.dates.length <= 1 ? 0 : (index / (chart.dates.length - 1)) * plotWidth);
+  const yFor = (value) => padding.top + plotHeight - (value / chart.maxValue) * plotHeight;
+  const gridValues = [0, Math.ceil(chart.maxValue / 2), chart.maxValue];
+  return (
+    <section className="panel ga4-chart-panel">
+      <div className="panel-heading">
+        <span className="section-mark blue" />
+        <div>
+          <strong>Sesiones por Fuente/medio de la sesión a lo largo del tiempo</strong>
+          <small>Día · {stats.startDate} - {stats.endDate}</small>
+        </div>
+      </div>
+      <div className="ga4-chart-scroll">
+        <svg className="ga4-traffic-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Sesiones por fuente y medio a lo largo del tiempo">
+          {gridValues.map((value) => (
+            <g key={value}>
+              <line x1={padding.left} x2={width - padding.right} y1={yFor(value)} y2={yFor(value)} />
+              <text x={width - padding.right + 8} y={yFor(value) + 4}>{formatStatsNumber(value)}</text>
+            </g>
+          ))}
+          {chart.dates.map((date, index) => index % 2 === 0 || index === chart.dates.length - 1 ? (
+            <text key={date} x={xFor(index)} y={height - 20} textAnchor="middle">{shortDateLabel(date)}</text>
+          ) : null)}
+          {chart.lines.map((line) => {
+            const points = line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ");
+            return (
+              <polyline
+                key={line.key}
+                points={points}
+                fill="none"
+                stroke={line.color}
+                strokeWidth={line.key === "Total" ? 3 : 2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeDasharray={line.dashed ? "4 4" : ""}
+              />
+            );
+          })}
+        </svg>
+      </div>
+      <div className="ga4-chart-legend">
+        {chart.lines.map((line) => (
+          <span key={line.key}>
+            <i style={{ background: line.color }} />
+            {line.label}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function buildCampaignUrl(campaign) {
@@ -6081,6 +6663,7 @@ function GoogleAdsWizard() {
   const [entries, setEntries] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [ga4Stats, setGa4Stats] = useState(null);
+  const [adsStatus, setAdsStatus] = useState(null);
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [draft, setDraft] = useState({
@@ -6103,12 +6686,18 @@ function GoogleAdsWizard() {
   const loadSignals = useCallback(async () => {
     setLoadingSignals(true);
     try {
-      const [statsResult, campaignsResult] = await Promise.all([
+      const [statsResult, campaignsResult, adsResult] = await Promise.all([
         api("/stats/monthly"),
         api("/stats/campaigns"),
+        api("/google-ads/status").catch((statusError) => ({
+          configured: false,
+          error: statusError.message,
+          checks: [],
+        })),
       ]);
       setEntries(Array.isArray(statsResult.entries) ? statsResult.entries : []);
       setCampaigns(Array.isArray(campaignsResult.campaigns) ? campaignsResult.campaigns : []);
+      setAdsStatus(adsResult);
     } catch (loadError) {
       setError(loadError.message);
     } finally {
@@ -6123,7 +6712,6 @@ function GoogleAdsWizard() {
   const service = GOOGLE_ADS_SERVICES[draft.service] || firstService;
   const objective = GOOGLE_ADS_OBJECTIVES[draft.objective] || GOOGLE_ADS_OBJECTIVES.leads;
   const dailyBudget = Math.max(0, Number(draft.budget || 0) / 30);
-  const estimatedLeads = Math.max(1, Math.floor(Number(draft.budget || 0) / service.cpa));
   const keywords = useMemo(() => {
     const custom = draft.customKeywords
       .split(",")
@@ -6192,7 +6780,6 @@ function GoogleAdsWizard() {
     geo: draft.geo,
     monthlyBudget: Number(draft.budget || 0),
     dailyBudget: Number(dailyBudget.toFixed(2)),
-    estimatedMonthlyLeads: estimatedLeads,
     bidStrategy: objective.bid,
     landingUrl: draft.landingUrl,
     conversionAction: objective.cta,
@@ -6220,7 +6807,12 @@ function GoogleAdsWizard() {
       headlines: [draft.headline1, draft.headline2, draft.headline3].filter(Boolean),
       descriptions: [draft.description1, draft.description2].filter(Boolean),
     },
-  }), [campaignScore, campaignTemperature, dailyBudget, draft, estimatedLeads, ga4Stats, keywords, negativeKeywords, objective, recommendedChannel, relevantCampaigns, selectedMonth, selectedYear, service, trafficSignals]);
+    googleAdsConnection: {
+      configured: Boolean(adsStatus?.configured),
+      checks: adsStatus?.checks || [],
+    },
+    scoreSource: "heuristica de Flow Console (stats mensuales + UTM). No es la API de Google Ads.",
+  }), [adsStatus, campaignScore, campaignTemperature, dailyBudget, draft, ga4Stats, keywords, negativeKeywords, objective, recommendedChannel, relevantCampaigns, selectedMonth, selectedYear, service, trafficSignals]);
 
   function setField(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -6298,11 +6890,25 @@ function GoogleAdsWizard() {
           <div>
             <span className="eyebrow">ADS</span>
             <h2>Radar de campañas</h2>
-            <p>Recoge señales de GA4, enlaces UTM y métricas guardadas para preparar campañas con evidencia antes de gastar dinero.</p>
+            <p>Prepara un brief con señales de esta consola (stats y UTM). No crea campañas en Google Ads. El CPA de plantilla no se muestra como dato real.</p>
           </div>
-          <div className={`ads-connection ${campaignScore >= 45 ? "ready" : "pending"}`}>
-            <strong>{campaignTemperature}</strong>
-            <span>{campaignScore}/100 · {loadingSignals ? "leyendo señales" : `${campaigns.length} UTM guardadas`}</span>
+          <div className={`ads-connection ${adsStatus?.live ? "ready" : "pending"}`}>
+            <strong>
+              {adsStatus?.live
+                ? `Google Ads: API OK${adsStatus.account ? ` · ${adsStatus.account}` : ""}`
+                : adsStatus?.configured
+                  ? "Google Ads: no responde"
+                  : "Google Ads: no conectado"}
+            </strong>
+            <span>
+              {adsStatus?.error
+                ? adsStatus.error
+                : adsStatus?.live
+                  ? "La API respondió. Esta pantalla no crea campañas; copia el brief."
+                  : adsStatus?.configured
+                    ? "Hay credenciales, pero la API no contestó. No se finge conexión."
+                    : (adsStatus?.checks || []).filter((check) => !check.configured).map((check) => check.label).join(" · ") || "Faltan variables de Google Ads"}
+            </span>
           </div>
         </header>
 
@@ -6414,9 +7020,8 @@ function GoogleAdsWizard() {
                 <input type="number" min="0" value={draft.budget} onChange={(event) => setField("budget", event.target.value)} />
               </div>
               <div className="ads-metrics">
-                <span><strong>{dailyBudget.toFixed(2)} €</strong> / día</span>
-                <span><strong>{estimatedLeads}</strong> leads estimados</span>
-                <span><strong>{service.cpa} €</strong> CPA referencia</span>
+                <span><strong>{dailyBudget.toFixed(2)} €</strong> / día (presupuesto ÷ 30)</span>
+                <span>Score {campaignScore}/100 · heurística de stats/UTM de esta consola, no de Google Ads</span>
               </div>
             </section>
 
@@ -6486,7 +7091,7 @@ function GoogleAdsWizard() {
               <article>
                 <span>Temperatura</span>
                 <strong>{campaignTemperature}</strong>
-                <small>{campaignScore}/100</small>
+                <small>{campaignScore}/100 · heurística local</small>
               </article>
               <article>
                 <span>Primer canal</span>
@@ -6563,6 +7168,8 @@ function StatsDashboard() {
   const [saving, setSaving] = useState(false);
   const [importingGa4, setImportingGa4] = useState(false);
   const [ga4Stats, setGa4Stats] = useState(null);
+  const [importingSearch, setImportingSearch] = useState(false);
+  const [searchConsoleStats, setSearchConsoleStats] = useState(null);
   const [utmDraft, setUtmDraft] = useState({
     id: "",
     name: "",
@@ -6618,8 +7225,15 @@ function StatsDashboard() {
   }), [entries, selectedYear]);
 
   const currentTotals = useMemo(() => sumStatsRows(draftRows), [draftRows]);
-  const topClickRows = useMemo(() => topStatsRows(draftRows, "clicks", 6), [draftRows]);
-  const topInteractionRows = useMemo(() => topStatsRows(draftRows, "interactions", 4), [draftRows]);
+  const ga4TrafficRows = useMemo(() => Array.isArray(ga4Stats?.trafficRows)
+    ? ga4Stats.trafficRows
+    : [], [ga4Stats]);
+  const displayTotals = ga4Stats ? {
+    publications: currentTotals.publications,
+    impressions: ga4Stats.pageViews,
+    interactions: ga4Stats.engagedSessions,
+    clicks: ga4Stats.sessions,
+  } : currentTotals;
   const years = [...new Set([
     ...entries.map((entry) => Number(entry.year)).filter(Boolean),
     currentYear,
@@ -6722,6 +7336,25 @@ function StatsDashboard() {
         : importError.message);
     } finally {
       setImportingGa4(false);
+    }
+  }
+
+  async function importSearchConsoleStats() {
+    setImportingSearch(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api(`/stats/google-search?year=${selectedYear}&month=${selectedMonth}`);
+      setSearchConsoleStats(result);
+      if (result.row) mergeGa4Rows([result.row]);
+      setMessage(`Search Console importado: ${formatStatsNumber(result.clicks)} clics, ${formatStatsNumber(result.impressions)} impresiones, CTR ${(Number(result.ctr || 0) * 100).toFixed(1)}%`);
+    } catch (importError) {
+      setSearchConsoleStats(null);
+      setError(importError.message.includes("Search Console no está configurado")
+        ? "Falta configurar Search Console. Abre /oauth/search-console/start y guarda el refresh token en Railway."
+        : importError.message);
+    } finally {
+      setImportingSearch(false);
     }
   }
 
@@ -6867,10 +7500,10 @@ function StatsDashboard() {
         </header>
 
         <section className="stats-summary-grid">
-          <article><span>Publicaciones</span><strong>{formatStatsNumber(currentTotals.publications)}</strong></article>
-          <article><span>Impresiones</span><strong>{formatStatsNumber(currentTotals.impressions)}</strong></article>
-          <article><span>Interacciones</span><strong>{formatStatsNumber(currentTotals.interactions)}</strong></article>
-          <article><span>Clics</span><strong>{formatStatsNumber(currentTotals.clicks)}</strong></article>
+          <article><span>Publicaciones</span><strong>{formatStatsNumber(displayTotals.publications)}</strong></article>
+          <article><span>Vistas GA4</span><strong>{formatStatsNumber(displayTotals.impressions)}</strong></article>
+          <article><span>Sesiones con interacción</span><strong>{formatStatsNumber(displayTotals.interactions)}</strong></article>
+          <article><span>Sesiones</span><strong>{formatStatsNumber(displayTotals.clicks)}</strong></article>
         </section>
 
         {(error || message) && (
@@ -6891,6 +7524,9 @@ function StatsDashboard() {
               <Button type="button" kind="primary" onClick={importGa4Stats} disabled={importingGa4}>
                 {importingGa4 ? "IMPORTANDO..." : "IMPORTAR GA4"}
               </Button>
+              <Button type="button" onClick={importSearchConsoleStats} disabled={importingSearch}>
+                {importingSearch ? "IMPORTANDO..." : "IMPORTAR SEARCH CONSOLE"}
+              </Button>
             </div>
             {ga4Stats && (
               <div className="stats-source-note">
@@ -6902,26 +7538,67 @@ function StatsDashboard() {
                 <strong>{formatStatsNumber((ga4Stats.outboundRows || []).length)} salidas</strong>
               </div>
             )}
-            <div className="stats-table">
-              <div className="stats-table-head">
-                <span>Canal</span>
-                <span>Publicaciones</span>
-                <span>Impresiones</span>
-                <span>Interacciones</span>
-                <span>Clics</span>
+            {searchConsoleStats && (
+              <div className="stats-source-note">
+                <span>Search Console</span>
+                <b>{searchConsoleStats.startDate} - {searchConsoleStats.endDate}</b>
+                <strong>{formatStatsNumber(searchConsoleStats.clicks)} clics</strong>
+                <strong>{formatStatsNumber(searchConsoleStats.impressions)} impresiones</strong>
+                <strong>{(Number(searchConsoleStats.ctr || 0) * 100).toFixed(1)}% CTR</strong>
+                <strong>pos. {Number(searchConsoleStats.position || 0).toFixed(1)}</strong>
               </div>
-              {draftRows.map((row, index) => (
-                <div className="stats-table-row" key={`${row.channel}-${index}`}>
-                  <div className="stats-channel-cell">{row.channel}</div>
-                  <div className="stats-number-cell">{formatStatsNumber(row.publications)}</div>
-                  <div className="stats-number-cell">{formatStatsNumber(row.impressions)}</div>
-                  <div className="stats-number-cell">{formatStatsNumber(row.interactions)}</div>
-                  <div className="stats-number-cell">{formatStatsNumber(row.clicks)}</div>
+            )}
+            {ga4TrafficRows.length ? (
+              <div className="stats-table ga4-traffic-table">
+                <div className="stats-table-head">
+                  <span>Fuente/medio de la sesión</span>
+                  <span>Sesiones</span>
+                  <span>Sesiones con interacción</span>
+                  <span>% interacción</span>
+                  <span>Tiempo medio</span>
+                  <span>Eventos</span>
                 </div>
-              ))}
-            </div>
+                <div className="stats-table-row stats-total-row">
+                  <div className="stats-channel-cell">Total</div>
+                  <div className="stats-number-cell">{formatStatsNumber(ga4Stats.sessions)}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(ga4Stats.engagedSessions)}</div>
+                  <div className="stats-number-cell">{formatStatsPercent(ga4Stats.sessions ? (ga4Stats.engagedSessions / ga4Stats.sessions) * 100 : 0)}</div>
+                  <div className="stats-number-cell">{formatStatsSeconds(ga4Stats.sessions ? ga4Stats.engagementSeconds / ga4Stats.sessions : 0)}</div>
+                  <div className="stats-number-cell">{formatStatsNumber(ga4Stats.eventCount)}</div>
+                </div>
+                {ga4TrafficRows.map((row, index) => (
+                  <div className="stats-table-row" key={`${row.sourceMedium}-${index}`}>
+                    <div className="stats-channel-cell">{row.sourceMedium}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.sessions)}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.engagedSessions)}</div>
+                    <div className="stats-number-cell">{formatStatsPercent(row.engagementRate)}</div>
+                    <div className="stats-number-cell">{formatStatsSeconds(row.averageEngagementSeconds)}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.eventCount)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="stats-table">
+                <div className="stats-table-head">
+                  <span>Canal</span>
+                  <span>Publicaciones</span>
+                  <span>Impresiones</span>
+                  <span>Interacciones</span>
+                  <span>Clics</span>
+                </div>
+                {draftRows.map((row, index) => (
+                  <div className="stats-table-row" key={`${row.channel}-${index}`}>
+                    <div className="stats-channel-cell">{row.channel}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.publications)}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.impressions)}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.interactions)}</div>
+                    <div className="stats-number-cell">{formatStatsNumber(row.clicks)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <footer className="stats-editor-actions">
-              <span>{loading ? "Cargando datos..." : "Las visitas/clics reales salen de GA4 con enlaces UTM. Los canales no configurados se ocultan para no inventar fuentes."}</span>
+              <span>{loading ? "Cargando datos..." : "Importar GA4 muestra la adquisición real por fuente/medio. Guardar mes conserva el resumen para comparar campañas."}</span>
               <Button className="primary" disabled={saving}>{saving ? "GUARDANDO..." : "GUARDAR MES"}</Button>
             </footer>
           </form>
@@ -7042,89 +7719,20 @@ function StatsDashboard() {
           </div>
         </section>
 
-        <section className="stats-insight-grid">
-          <article className="panel stats-insight-card">
-            <div className="panel-heading compact">
-              <span className="section-mark" />
+        {ga4Stats ? (
+          <Ga4TrafficChart stats={ga4Stats} />
+        ) : (
+          <section className="panel ga4-chart-panel">
+            <div className="panel-heading">
+              <span className="section-mark blue" />
               <div>
-                <strong>Qué está trayendo tráfico</strong>
-                <small>Ordenado por clics/sesiones del mes seleccionado</small>
+                <strong>Sesiones por Fuente/medio de la sesión a lo largo del tiempo</strong>
+                <small>Importa GA4 para ver la evolución diaria</small>
               </div>
             </div>
-            {topClickRows.length ? (
-              <div className="stats-insight-table">
-                {topClickRows.map((row) => (
-                  <div key={row.channel}>
-                    <strong>{row.channel}</strong>
-                    <span>{formatStatsNumber(row.clicks)} clics</span>
-                    <span>{formatStatsNumber(row.impressions)} vistas</span>
-                    <span>{percentStat(row.clicks, row.impressions)} clic/vista</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty">Importa GA4 o guarda datos del mes para ver de dónde viene tráfico real.</div>
-            )}
-          </article>
-
-          <article className="panel stats-insight-card">
-            <div className="panel-heading compact">
-              <span className="section-mark green" />
-              <div>
-                <strong>Qué retiene o interesa</strong>
-                <small>Interacciones y sesiones con engagement</small>
-              </div>
-            </div>
-            {topInteractionRows.length ? (
-              <div className="stats-insight-table">
-                {topInteractionRows.map((row) => (
-                  <div key={row.channel}>
-                    <strong>{row.channel}</strong>
-                    <span>{formatStatsNumber(row.interactions)} interacciones</span>
-                    <span>{formatStatsNumber(row.impressions)} vistas</span>
-                    <span>{percentStat(row.interactions, row.impressions)} engagement</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty">Sin señal suficiente todavía.</div>
-            )}
-          </article>
-
-          <article className="panel stats-insight-card">
-            <div className="panel-heading compact">
-              <span className="section-mark amber" />
-              <div>
-                <strong>Detalle GA4</strong>
-                <small>Entradas UTM y clics salientes detectados</small>
-              </div>
-            </div>
-            {ga4Stats ? (
-              <div className="stats-ga4-detail">
-                <div>
-                  <b>Entradas UTM</b>
-                  {(ga4Stats.utmRows || []).slice(0, 5).map((row) => (
-                    <span key={`${row.source}-${row.medium}-${row.campaign}-${row.content}`}>
-                      {row.channel}: {formatStatsNumber(row.sessions)} sesiones
-                    </span>
-                  ))}
-                  {!(ga4Stats.utmRows || []).length && <span>Sin entradas UTM en este mes.</span>}
-                </div>
-                <div>
-                  <b>Salidas desde la web</b>
-                  {(ga4Stats.outboundRows || []).slice(0, 5).map((row) => (
-                    <span key={row.linkUrl}>
-                      {row.channel}: {formatStatsNumber(row.clicks)} clics
-                    </span>
-                  ))}
-                  {!(ga4Stats.outboundRows || []).length && <span>Sin clics salientes detectados.</span>}
-                </div>
-              </div>
-            ) : (
-              <div className="empty">Pulsa Importar GA4 para ver URLs UTM y clics salientes reales.</div>
-            )}
-          </article>
-        </section>
+            <div className="empty">Pulsa Importar GA4 para pintar la gráfica con datos reales.</div>
+          </section>
+        )}
       </section>
     </main>
   );
@@ -7226,6 +7834,7 @@ export default function App() {
   function syncCurrentView() {
     if (view === "inbox") setInboxRefresh((current) => current + 1);
     else if (view === "calendar") setCalendarRefresh((current) => current + 1);
+    else if (view === "stats" || view === "add" || view === "correct" || view === "ads") return;
     else loadWorkflows();
   }
 
@@ -7366,6 +7975,18 @@ export default function App() {
             LIBRETA
           </button>
           <button
+            className={view === "add" ? "active" : ""}
+            onClick={() => navigate("add")}
+          >
+            AÑADIR
+          </button>
+          <button
+            className={view === "correct" ? "active" : ""}
+            onClick={() => navigate("correct")}
+          >
+            CORREGIR
+          </button>
+          <button
             className={view === "instagram" ? "active" : ""}
             onClick={() => {
               setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
@@ -7385,6 +8006,12 @@ export default function App() {
             onClick={() => navigate("stats")}
           >
             ESTADÍSTICAS
+          </button>
+          <button
+            className={view === "ads" ? "active" : ""}
+            onClick={() => navigate("ads")}
+          >
+            ADS
           </button>
         </nav>
         <div className="top-actions">
@@ -7408,6 +8035,12 @@ export default function App() {
         />
 	      ) : view === "notebook" ? (
 		        <NotesNotebook />
+      ) : view === "add" ? (
+        <RagEntryConsole />
+      ) : view === "correct" ? (
+        <RagCorrectConsole />
+      ) : view === "ads" ? (
+        <GoogleAdsWizard />
       ) : view === "inbox" ? (
         <Inbox
           refreshToken={inboxRefresh}
@@ -7459,6 +8092,7 @@ export default function App() {
           onOpenInbox={openInbox}
           onOpenForumNotice={openForumNotice}
           onOpenPublicationTarget={openPublicationTarget}
+          onOpenStats={() => navigate("stats")}
         />
       )}
     </div>

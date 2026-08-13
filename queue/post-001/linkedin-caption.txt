@@ -1,1 +1,0 @@
-Acabo de preparar DataImporter v2: una forma mas sencilla de importar, limpiar y revisar datos sin convertir cada archivo en un pequeno proyecto paralelo.
