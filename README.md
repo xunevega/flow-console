@@ -12,7 +12,7 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 
 ### Calendario
 
-- Muestra tareas, publicaciones programadas, avisos de n8n y consejos enviados por Editorial Brain.
+- Muestra tareas, publicaciones programadas, avisos de n8n y consejos del cerebro si los hay.
 - Crea tareas puntuales.
 - Crea tareas repetitivas semanales, quincenales, cada tres semanas o mensuales.
 - Edita una tarea individual.
@@ -21,8 +21,9 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Borra tareas individuales.
 - Borra series completas.
 - Abre la pantalla correcta segun la tarea: publicaciones, blog, foro, bandeja, estadisticas o workflow tecnico.
-- Recibe senales internas desde Editorial Brain.
-- Marca senales como gestionadas.
+- Pide senales a Editorial Brain al sincronizar. Si no responde o no aporta, se ve y el calendario sigue.
+- Recibe senales internas si Editorial Brain las empuja.
+- Marca senales como gestionadas sin borrar titulo ni fecha.
 - Ignora o borra senales del calendario.
 - Prepara una publicacion desde una tarea de calendario.
 
@@ -82,6 +83,8 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Abre el editor de publicacion para un destino concreto.
 - Crea destinos/canales de publicacion.
 - Sube imagen o video para una publicacion.
+- Analiza la imagen con ChatGPT al generar y en Publicaciones. Si falta `OPENAI_API_KEY` o falla, se ve.
+- Genera imagen IA con ChatGPT. Si falta `OPENAI_API_KEY` o la API no devuelve archivo, se ve. El archivo entra en la biblioteca.
 - Ajusta aspecto de imagen.
 - Reposiciona imagen.
 - Ejecuta preflight antes de publicar.
@@ -114,35 +117,30 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Importa datos de Search Console cuando OAuth esta configurado.
 - Resume totales mensuales.
 - Muestra ranking de canales.
-- Guarda URLs UTM/campanas.
+- Guarda URLs UTM.
 - Copia URLs UTM generadas.
-- Recupera campanas guardadas.
-- Borra campanas guardadas.
-- Comprueba si la API de Google Ads responde. No crea campanas.
+- Recupera enlaces UTM guardados.
+- Borra enlaces UTM guardados.
 
 ### Cerebro editorial
 
-- Consulta Editorial Brain antes de generar contenido si esta configurado.
-- Envia uso de memoria al cerebro.
-- Envia feedback de ediciones al cerebro.
-- Envia publicaciones confirmadas al cerebro como aprendizaje.
-- Analiza imagenes de publicaciones con vision cuando hay clave Gemini.
-- Extrae aprendizaje visual: estilo, composicion, tono, presencia de producto y calidad.
-- Envia aprendizajes visuales al cerebro.
+El cerebro es el almacen de estilo. Flow no lo sustituye: le manda material, corrige pesos y le pide texto.
+
+- Consulta el cerebro antes de generar si esta configurado y responde.
+- Envia uso y ediciones como feedback. Si el registro falla, se ve.
+- Envia publicaciones confirmadas como aprendizaje. Si no las recibe, la UI lo dice.
 
 ### RAG local heredado
 
 - Muestra estado del RAG.
 - Lee memoria RAG local.
-- Valora material nuevo.
+- Valora material nuevo, incluida una imagen de estilo.
 - Ingresa material confirmado.
 - Limpia memoria RAG local.
 - Recibe inserciones internas de pgvector desde n8n.
 
 ## Acciones que no ejecuta
 
-- No decide la identidad editorial permanente.
-- No mantiene el libro de estilo vivo como fuente principal.
-- No prepara campanas Ads completas; eso vive en Editorial Brain.
-- No genera anuncios directamente dentro de Google Ads.
+- No es el cerebro ni decide la identidad editorial permanente. El estilo vive en el cerebro; Flow lo alimenta y lo corrige.
+- No tiene pantalla Ads ni crea campañas de Google Ads.
 - No guarda secretos en el navegador.

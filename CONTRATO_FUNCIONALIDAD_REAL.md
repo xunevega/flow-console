@@ -64,7 +64,7 @@ Alcance: este repo. Flow Console es calendario, libreta, publicaciones y avisos.
 | Tareas CRUD + series | Funcional | `/api/calendar/tasks` | Puntual y repetitiva. |
 | Abrir destino / workflow / avisos / stats | Funcional | `onOpenPublicationTarget`, `onOpenWorkflow`, `onOpenInbox`, `onOpenStats` | El boton hace algo. |
 | Notas del dia (en calendario) | Funcional | mismas APIs que Libreta | |
-| Senales Editorial Brain | Parcial | `/api/internal/calendar/signals` | Solo si Brain esta configurado. Sin Brain, el calendario sigue con tareas/publicaciones. |
+| Senales Editorial Brain | Funcional / parcial | `GET /api/calendar/signals` pide al cerebro; `PATCH` conserva el contenido; push interno sigue | Si Brain esta vivo, la consola tira senales. Vacio tras un pull es honesto. Si Brain no responde, se ve el error y el calendario sigue con tareas/publicaciones. Hecho/Borrar ya no borra titulo ni fecha. |
 | Borrar todas las tareas | Funcional y peligroso | `DELETE /api/calendar/tasks` | Accion real. Mejorable: confirmacion destructiva clara. |
 
 ### Libreta
@@ -78,15 +78,17 @@ Alcance: este repo. Flow Console es calendario, libreta, publicaciones y avisos.
 | Pieza | Estado | Evidencia | Nota honesta |
 | --- | --- | --- | --- |
 | Hub de destinos | Funcional | `InstagramPublisher` + `/api/publication-targets` | Abrir destino entra al editor. |
-| Generador embebido | Funcional / parcial | `POST /api/generator` | Si Brain está vivo: escribe texto o orienta n8n con memoria/instrucción real. Si Brain no aporta nada, error visible (no se finge). Sin Brain, n8n genera y se etiqueta como n8n. `GET /api/generator/status` hace ping real, no solo env vars. |
-| Instagram | Parcial | worker externo o webhook n8n | Depende de `PUBLICATION_EXTERNAL_WORKER_URL` o n8n. El copy avisa skipMeta. |
+| Generador embebido | Funcional / parcial | `POST /api/generator` | Cerebro si escribe. Si no, n8n o ChatGPT (`OPENAI_API_KEY`), siempre con la fuente dicha. Sin los tres, error visible. |
+| Visión ChatGPT | Funcional / parcial | `POST /api/publications/vision` + análisis al generar | ChatGPT. Si falta clave o falla, el error se ve. |
+| Imagen IA | Funcional / parcial | `POST /api/publications/generate-image` | ChatGPT (`OPENAI_API_KEY`, Images API). Si falta la clave o la API no devuelve archivo, el error se ve. El archivo entra en biblioteca. |
+| Instagram | Parcial | worker externo o webhook n8n | Depende de worker o n8n. Programar desde Calendario crea el post. Preflight lo dice. |
 | LinkedIn | Parcial | worker externo o n8n | Igual. |
 | YouTube | Parcial | YouTube API directa | Solo si OAuth esta configurado. Preflight lo dice y enlaza `/oauth/youtube/start`. |
 | Pinterest | Parcial | Pinterest API | Token + board. Preflight lo dice. |
 | Blog crear/editar | Parcial | `/api/blog/articles` + `articulos.php` | Publicar/editar si hay token. **No hay borrado.** |
 | TikTok | Parcial | worker `draft` / `publish` | «Preparar para revisar» es honesto. «Intentar publicar» depende del worker. |
 | Foros desde Publicaciones | Funcional | `ForumHub` montado | Gestiona avisos/karma de workflows de foro. |
-| Historial / confirmar / programar | Funcional | posts en `data/` + cron `processScheduledPublicationPosts` | Hay date picker y botón PROGRAMAR. Confirmar publicado está en calendario e historial. No hay DELETE de posts. |
+| Historial / confirmar / programar | Funcional | posts en `data/` + cron | Crear destino en Calendario crea `action: schedule` en posts. Hay date picker y PROGRAMAR. El cron publica cuando toca. |
 | Destino sin webhook | Parcial | boton «CONFIGURA ENTREGA» | No finge publicar. Bien. |
 
 ### Avisos / bandeja
@@ -100,7 +102,7 @@ Alcance: este repo. Flow Console es calendario, libreta, publicaciones y avisos.
 | Pieza | Estado | Evidencia | Nota honesta |
 | --- | --- | --- | --- |
 | Listar, activar, desactivar, retry, detalle | Funcional | APIs n8n | No hay item de nav. Se abre desde Calendario. Eso esta bien si se mantiene. |
-| Ejecutar workflow | Parcial | `runnableWorkflows` mapa fijo | Solo IDs/nombres mapeados. El resto no se puede lanzar desde consola. Debe verse, no fingirse. |
+| Ejecutar workflow | Funcional / parcial | webhook del workflow o mapa fijo | Si el workflow tiene nodo webhook, se puede lanzar. Si no, se ve. |
 
 ### Estadisticas
 
@@ -117,16 +119,9 @@ Alcance: este repo. Flow Console es calendario, libreta, publicaciones y avisos.
 | Pieza | Estado | Evidencia | Nota honesta |
 | --- | --- | --- | --- |
 | APIs valorar / ingestar / memory | Funcional (backend) | `/api/rag/*` | Brain si está vivo; si no, n8n + pgvector. El badge no llama cerebro a n8n. |
-| Añadir (`RagEntryConsole`) | Funcional / parcial | montado en nav `add` | Valora e ingesta en Brain o n8n RAG. Sin conexión viva, lo dice. |
-| Corregir (`RagCorrectConsole`) | Funcional / parcial | montado en nav `correct` | Lee memoria real y borra ingestas. |
-| Generador usa memoria | Parcial | `POST /api/generator` + status ping | Solo si Brain aporta o hay memoria local usable. Consulta vacía no cuenta. |
-
-### Ads
-
-| Pieza | Estado | Evidencia | Nota honesta |
-| --- | --- | --- | --- |
-| `GET /api/google-ads/status` | Parcial | ping a la API (`googleAds:search`) | `live` solo si Google Ads responde. Variables solas no cuentan. |
-| `GoogleAdsWizard` | Parcial | montado en nav `ads` | Brief + señales de stats/UTM. No crea campañas. No presenta CPA/leads inventados. |
+| Añadir (`RagEntryConsole`) | Funcional / parcial | montado en nav `add` | Cerebro si está vivo; si no, ChatGPT o memoria local. El hueco se ve. |
+| Corregir (`RagCorrectConsole`) | Funcional / parcial | montado en nav `correct` | Sube, baja, quita y renombra. Si el cerebro no acepta, se ve; la memoria local sigue. |
+| Generador usa memoria | Funcional / parcial | `POST /api/generator` | Cerebro, memoria local o ChatGPT. Consulta vacía no cuenta. n8n recibe instrucción; no se afirma que la usara. |
 
 ---
 
@@ -141,7 +136,7 @@ Ninguno de los tres que había: la cola de ejemplo y `data/posts.json` se retira
 
 ## Que si es real hoy (si hay env)
 
-Sesion (sin exigir n8n), calendario, libreta, añadir/corregir memoria (si Brain/n8n RAG), publicaciones (publicar, programar, confirmar, biblioteca), avisos, n8n desde calendario, stats manuales + UTM, GA4 y Search Console si OAuth, Ads como brief local + ping real a Google Ads, generador si n8n/Brain.
+Sesion (sin exigir n8n), calendario (pide senales al cerebro si esta configurado), libreta, añadir/corregir el almacén de estilo (si Brain/n8n RAG; imagen de estilo con ChatGPT si hay `OPENAI_API_KEY`), publicaciones (publicar, programar, confirmar; el aprendizaje se ve si llega o si falla; visión e imagen IA con ChatGPT si hay `OPENAI_API_KEY`), avisos, n8n desde calendario, stats manuales + UTM, GA4 y Search Console si OAuth, generador si n8n/Brain/ChatGPT (sin fingir que n8n uso la memoria; texto listo por canal). No hay pantalla Ads.
 
 ## Orden de endurecimiento
 

@@ -166,12 +166,12 @@ Los datos son editables. GA4 y Search Console se importan con boton si OAuth est
 
 ```text
 Corregir
--> ver memoria de creacion
--> subir/bajar/eliminar pesos editoriales
--> limpiar linea editorial
+-> ver el estilo que el cerebro ya tiene
+-> subir/bajar/renombrar/quitar
+-> retirar ingestas que ensucian
 ```
 
-Corregir es mantenimiento de conocimiento existente. No mete material nuevo: corrige lo que ya esta guardado.
+Corregir es mantenimiento del almacen de estilo. No mete material nuevo: corrige lo que ya esta guardado.
 
 Aqui puedes ajustar:
 
@@ -234,9 +234,6 @@ Quiero crear o publicar contenido?
 
 Quiero medir clics e impacto mensual?
 -> Estadisticas
-
-Quiero un brief de campaña?
--> Ads
 
 Quiero meter conocimiento nuevo?
 -> Añadir

@@ -77,14 +77,6 @@ const youtubeCategoryId = String(process.env.YOUTUBE_CATEGORY_ID || "22").trim()
 const pinterestAccessToken = String(process.env.PINTEREST_ACCESS_TOKEN || "").trim();
 const pinterestBoardId = String(process.env.PINTEREST_BOARD_ID || "").trim();
 const pinterestLinkUrl = safeUrl(process.env.PINTEREST_LINK_URL) || safeUrl(process.env.FLOW_CONSOLE_PUBLIC_URL) || "";
-const googleAdsConfig = {
-  clientId: String(process.env.GOOGLE_ADS_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || "").trim(),
-  clientSecret: String(process.env.GOOGLE_ADS_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || "").trim(),
-  developerToken: String(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "").trim(),
-  refreshToken: String(process.env.GOOGLE_ADS_REFRESH_TOKEN || "").trim(),
-  customerId: String(process.env.GOOGLE_ADS_CUSTOMER_ID || "").trim(),
-  loginCustomerId: String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || "").trim(),
-};
 const ftpHost = String(process.env.FTP_HOST || "").trim();
 const ftpPort = Number(process.env.FTP_PORT || 21);
 const ftpUser = String(process.env.FTP_USER || "").trim();
@@ -98,8 +90,10 @@ const ragInternalToken = String(process.env.RAG_INTERNAL_TOKEN || "").trim();
 const claudeSearchWebhook = String(process.env.CLAUDE_SEARCH_WEBHOOK || process.env.EXTERNAL_RESEARCH_WEBHOOK || process.env.LAST30DAYS_WEBHOOK || process.env.CLAUDE_LAST30DAYS_WEBHOOK || "/webhook/cerebro-search").trim();
 const editorialBrainUrl = String(process.env.EDITORIAL_BRAIN_URL || "").replace(/\/+$/, "");
 const editorialBrainToken = String(process.env.EDITORIAL_BRAIN_API_TOKEN || "").trim();
-const geminiApiKey = String(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || "").trim();
-const geminiVisionModel = String(process.env.GEMINI_VISION_MODEL || "gemini-2.5-flash-lite").trim();
+const openaiApiKey = String(process.env.OPENAI_API_KEY || "").trim();
+const openaiTextModel = String(process.env.OPENAI_TEXT_MODEL || "gpt-4o").trim();
+const openaiVisionModel = String(process.env.OPENAI_VISION_MODEL || process.env.OPENAI_TEXT_MODEL || "gpt-4o").trim();
+const openaiImageModel = String(process.env.OPENAI_IMAGE_MODEL || "gpt-image-1").trim();
 const databaseUrl = process.env.DATABASE_URL || "";
 let pgPool;
 let ragSchemaReady = false;
@@ -1386,6 +1380,117 @@ function generatorMemoryPayload(memory) {
   };
 }
 
+function scoredMemoryItems(values, usage = {}, limit = 48) {
+  const counts = new Map();
+  const labels = new Map();
+  const bump = (value, amount) => {
+    const text = canonicalMemoryText(value);
+    const key = canonicalMemoryKey(text);
+    if (!key || isOperationalMemoryNoise(text)) return;
+    labels.set(key, labels.get(key) || text);
+    counts.set(key, (counts.get(key) || 0) + Math.max(0, Number(amount) || 0));
+  };
+  for (const value of uniqueStrings(values || [])) bump(value, 1);
+  for (const [value, count] of Object.entries(usage && typeof usage === "object" ? usage : {})) {
+    bump(value, Number(count) || 0);
+  }
+  const maxCount = Math.max(1, ...counts.values(), 1);
+  return [...counts.entries()]
+    .map(([key, count]) => ({
+      label: labels.get(key) || key,
+      count,
+      score: Math.round((count / maxCount) * 100),
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "es"))
+    .slice(0, limit);
+}
+
+function correctMemoryPayload(memory) {
+  const clean = normalizeRagMemory(memory);
+  const generator = generatorMemoryPayload(memory);
+  const visibleValues = (values) => uniqueStrings(values || []).filter((value) => !isOperationalMemoryNoise(value));
+  const visibleDocuments = dedupeRagDocuments(clean.documents || []).map((document) => ({
+    ...document,
+    tags: visibleValues(document.tags),
+    topics: visibleValues(document.topics),
+    stanceTags: visibleValues(document.stanceTags),
+    styles: visibleValues(document.styles),
+  })).slice(0, 40);
+  const positions = (generator.topicSummary || []).find((item) => item.id === "positions");
+  const categories = [
+    {
+      id: "style",
+      title: "Estilo y voz",
+      description: "Cómo debe escribir las entradas: tono, ritmo, registro.",
+      items: scoredMemoryItems([...(clean.textPreferences || []), ...(clean.styleTags || [])], clean.usage.styles),
+    },
+    {
+      id: "topics",
+      title: "Temas",
+      description: "Conceptos que deben salir cuando el producto lo pida.",
+      items: scoredMemoryItems(clean.topics, clean.usage.topics),
+    },
+    {
+      id: "positions",
+      title: "Criterios y postura",
+      description: "Límites y tesis. Tiene que poder usarse como criterio al escribir.",
+      items: positions?.items?.length
+        ? positions.items
+        : scoredMemoryItems((clean.documents || []).flatMap((document) => document.stanceTags || []), clean.usage.topics),
+    },
+    {
+      id: "influences",
+      title: "Pistas",
+      description: "Instrucciones y referencias reutilizables para generar.",
+      items: scoredMemoryItems(clean.promptHints, clean.usage.prompts),
+    },
+    {
+      id: "tags",
+      title: "Etiquetas",
+      description: "Rótulos sueltos. Quita ruido de canal o de entrega.",
+      items: scoredMemoryItems(clean.tags, clean.usage.tags, 60),
+    },
+  ].filter((category) => category.items.length);
+  return {
+    ...generator,
+    topicSummary: categories,
+    recentDocuments: visibleDocuments,
+    documentCount: (clean.documents || []).length,
+    promptHints: visibleValues(clean.promptHints).slice(0, 24),
+    suppressed: clean.suppressed,
+  };
+}
+
+function brainCleanFallbackBody(body) {
+  const action = String(body?.action || "");
+  const value = String(body?.value || body?.tag || "").trim();
+  const replacement = String(body?.replacement || "").trim();
+  const category = String(body?.category || "tags");
+  if (action === "raise-item" && (category === "tags" || !body?.category)) return { action: "raise-tag", tag: value };
+  if (action === "lower-item" && (category === "tags" || !body?.category)) return { action: "lower-tag", tag: value };
+  if (action === "remove-item" && (category === "tags" || !body?.category)) return { action: "remove-tag", tag: value };
+  if (action === "rename-item" && value && replacement) return { action: "rename-tag", tag: value, replacement };
+  return null;
+}
+
+async function cleanEditorialBrainMemory(body) {
+  try {
+    return await callEditorialBrain("/api/rag/memory/clean", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+      timeoutMs: 30000,
+    });
+  } catch (error) {
+    const fallback = brainCleanFallbackBody(body);
+    if (!fallback || ![400, 404, 405, 501].includes(Number(error.status))) throw error;
+    return callEditorialBrain("/api/rag/memory/clean", {
+      method: "POST",
+      body: JSON.stringify(fallback),
+      timeoutMs: 30000,
+    });
+  }
+}
+
 function tagLooksLikeTopic(value) {
   const text = normalizedMemoryKey(value);
   if (!text) return false;
@@ -1446,6 +1551,29 @@ function generatorMemoryInstruction(memoryPayload) {
     "Puedes conservar la referencia corta solo como contexto si el usuario la escribió, pero el prompt final debe entenderse por sus rasgos visuales, no por copiar una firma o marca.",
   ].filter(Boolean);
   return lines.join("\n");
+}
+
+function generatorChannelInstruction(channel = "", formato = "") {
+  const key = `${channel} ${formato}`.toLowerCase();
+  if (/youtube/.test(key)) {
+    return "Canal YouTube: título de 40-70 caracteres con tesis clara, más una descripción de 2-4 frases. No inventes timestamps. Listo para pegar.";
+  }
+  if (/linkedin/.test(key)) {
+    return "Canal LinkedIn: pieza de 800-1600 caracteres. Tesis en la primera frase. Párrafos cortos. Sin muro de hashtags. Un cierre accionable.";
+  }
+  if (/blog|art[ií]culo/.test(key)) {
+    return "Canal Blog: título, entradilla y cuerpo. Estructura usable. No es un caption de red social.";
+  }
+  if (/pinterest/.test(key)) {
+    return "Canal Pinterest: título corto y descripción de 1-2 frases. Palabras que alguien buscaría. Sin hilo largo.";
+  }
+  if (/tiktok/.test(key)) {
+    return "Canal TikTok: primera línea gancho. Caption breve. CTA de una frase. Hashtags solo si el estilo los usa.";
+  }
+  if (/instagram|ig\b/.test(key) || /publicaci[oó]n/.test(key)) {
+    return "Canal Instagram: caption listo para publicar. 80-220 palabras. Saltos de línea. Un CTA. 3-8 hashtags al final solo si el estilo los usa. No expliques el caption.";
+  }
+  return "Entrega lista para el canal pedido. Longitud y formato del producto, no un informe.";
 }
 
 function generatorIntentInstruction(value) {
@@ -1750,72 +1878,520 @@ function visionList(value) {
   return String(value).split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
 }
 
-async function analyzePublicationImage(post, visual) {
-  if (!geminiApiKey || !visual?.mediaUrl || visual.mediaKind !== "imagen") return null;
-  const cacheKey = crypto.createHash("sha256").update(visual.mediaUrl).digest("hex");
-  try {
+function parsedVisionAnalysis(parsed, extra = {}) {
+  return {
+    configured: true,
+    live: extra.live !== false,
+    model: extra.model || openaiVisionModel,
+    analyzedAt: extra.analyzedAt || new Date().toISOString(),
+    cached: Boolean(extra.cached),
+    summary: String(parsed?.summary || "").slice(0, 1000),
+    visibleText: String(parsed?.visibleText || "").slice(0, 1000),
+    subjects: uniqueStrings(visionList(parsed?.subjects), 12),
+    composition: String(parsed?.composition || "").slice(0, 1000),
+    palette: String(parsed?.palette || "").slice(0, 600),
+    style: String(parsed?.style || "").slice(0, 800),
+    mood: String(parsed?.mood || "").slice(0, 600),
+    meaning: String(parsed?.meaning || "").slice(0, 1000),
+    brandFit: String(parsed?.brandFit || "").slice(0, 1000),
+    warnings: uniqueStrings(visionList(parsed?.warnings), 8),
+    reusableRules: uniqueStrings(visionList(parsed?.reusableRules), 12),
+  };
+}
+
+async function analyzeImageBytes(bytes, mimeType, prompt, cacheKey = "") {
+  if (!openaiApiKey) {
+    return { configured: false, live: false, error: "Falta OPENAI_API_KEY. No hay visión." };
+  }
+  if (!bytes?.length) return { configured: true, live: false, error: "No hay bytes de imagen para analizar." };
+  if (bytes.length > 8 * 1024 * 1024) return { configured: true, live: false, error: "Imagen demasiado grande para análisis visual." };
+  const type = String(mimeType || "").split(";")[0].trim().toLowerCase() || "image/jpeg";
+  if (!/^image\/(jpeg|png|webp|gif)$/i.test(type)) {
+    return { configured: true, live: false, error: `Tipo visual no soportado: ${type}` };
+  }
+  if (cacheKey) {
     const cache = await readVisualAnalysisCache();
     const cached = cache.items?.[cacheKey];
-    if (cached?.analysis) return { ...cached.analysis, cached: true };
-
-    const { bytes, mimeType } = await readImageForVision(visual.mediaUrl);
-    if (!bytes.length || bytes.length > 8 * 1024 * 1024) throw new Error("Imagen demasiado grande para analisis visual");
-    if (!/^image\/(jpeg|png|webp|gif)$/i.test(mimeType)) throw new Error(`Tipo visual no soportado: ${mimeType}`);
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiVisionModel)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [
-            { text: visualAnalysisPrompt(post, visual) },
-            { inline_data: { mime_type: mimeType, data: bytes.toString("base64") } },
-          ],
-        }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 900,
-          responseMimeType: "application/json",
-        },
-      }),
-      signal: AbortSignal.timeout(60000),
+    if (cached?.analysis && !cached.analysis.error) {
+      return { ...cached.analysis, cached: true, configured: true, live: true };
+    }
+  }
+  try {
+    const dataUrl = `data:${type};base64,${bytes.toString("base64")}`;
+    const result = await openaiChat({
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: dataUrl } },
+        ],
+      }],
+      model: openaiVisionModel,
+      temperature: 0.2,
+      maxTokens: 900,
+      json: true,
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body?.error?.message || `Gemini respondio ${response.status}`);
-    const raw = normalizeVisionText(body?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n"));
+    const raw = normalizeVisionText(result.text);
     let parsed = null;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      parsed = { summary: raw };
+      parsed = parseModelJson(raw) || { summary: raw };
     }
-    const analysis = {
-      model: geminiVisionModel,
-      analyzedAt: new Date().toISOString(),
-      summary: String(parsed.summary || "").slice(0, 1000),
-      visibleText: String(parsed.visibleText || "").slice(0, 1000),
-      subjects: uniqueStrings(visionList(parsed.subjects), 12),
-      composition: String(parsed.composition || "").slice(0, 1000),
-      palette: String(parsed.palette || "").slice(0, 600),
-      style: String(parsed.style || "").slice(0, 800),
-      mood: String(parsed.mood || "").slice(0, 600),
-      meaning: String(parsed.meaning || "").slice(0, 1000),
-      brandFit: String(parsed.brandFit || "").slice(0, 1000),
-      warnings: uniqueStrings(visionList(parsed.warnings), 8),
-      reusableRules: uniqueStrings(visionList(parsed.reusableRules), 12),
-    };
-    cache.items = {
-      ...(cache.items || {}),
-      [cacheKey]: { mediaUrl: visual.mediaUrl, analysis },
-    };
-    await writeVisualAnalysisCache(cache);
+    const analysis = parsedVisionAnalysis(parsed, { model: result.model });
+    if (cacheKey) {
+      const cache = await readVisualAnalysisCache();
+      cache.items = { ...(cache.items || {}), [cacheKey]: { analysis } };
+      await writeVisualAnalysisCache(cache);
+    }
     return analysis;
   } catch (error) {
-    console.warn(`No se pudo analizar imagen de publicacion: ${error.message}`);
-    return { error: error.message };
+    return { configured: true, live: false, error: error.message };
   }
+}
+
+async function analyzeImageFromDataUrl(dataUrl, context = {}) {
+  const match = String(dataUrl || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([a-z0-9+/=]+)$/i);
+  if (!match) return { configured: Boolean(openaiApiKey), live: false, error: "La imagen no es JPG, PNG, WebP o GIF." };
+  const bytes = Buffer.from(match[2], "base64");
+  const prompt = visualAnalysisPrompt({ caption: context.caption, target: { name: context.channel || "Publicaciones" } }, { aspect: context.aspect || "" });
+  const cacheKey = crypto.createHash("sha256").update(String(dataUrl).slice(0, 5000)).digest("hex");
+  return analyzeImageBytes(bytes, match[1], prompt, cacheKey);
+}
+
+async function analyzePublicationImage(post, visual) {
+  if (!visual?.mediaUrl || visual.mediaKind !== "imagen") return null;
+  if (!openaiApiKey) {
+    return { configured: false, live: false, error: "Falta OPENAI_API_KEY. No hay visión." };
+  }
+  try {
+    const { bytes, mimeType } = await readImageForVision(visual.mediaUrl);
+    const cacheKey = crypto.createHash("sha256").update(visual.mediaUrl).digest("hex");
+    return analyzeImageBytes(bytes, mimeType, visualAnalysisPrompt(post, visual), cacheKey);
+  } catch (error) {
+    return { configured: true, live: false, error: error.message };
+  }
+}
+
+async function visualBriefForImage({ caption, targetId, aspect, analysis }) {
+  const captionText = String(caption || "").trim();
+  const analysisText = visualAnalysisMemoryText(analysis);
+  if (editorialBrainEnabled()) {
+    try {
+      const brain = await queryEditorialBrain({
+        task: "image_brief",
+        channel: targetId || "",
+        context: { caption: captionText, aspect: aspect || "", analysis },
+      });
+      const contribution = brainContribution(brain);
+      if (contribution.usable) {
+        const prompt = [
+          contribution.instruction,
+          contribution.variants[0] || "",
+          captionText ? `Texto de la pieza: ${captionText}` : "",
+          analysisText,
+          aspect && aspect !== "original" ? `Formato: ${aspect}` : "",
+          "Genera una sola imagen fotográfica o ilustración usable en publicación. Sin texto enorme en la imagen.",
+        ].filter(Boolean).join("\n");
+        return { prompt, source: "editorial-brain", applied: true };
+      }
+      return await localVisualBrief({ captionText, targetId, analysisText });
+    } catch (error) {
+      const local = await localVisualBrief({ captionText, targetId, analysisText });
+      if (local.prompt) return { ...local, error: `El cerebro no respondió (${error.message}). Brief desde estilo local.` };
+      return { prompt: null, source: "editorial-brain", applied: false, error: error.message };
+    }
+  }
+  return await localVisualBrief({ captionText, targetId, analysisText });
+}
+
+async function localVisualBrief({ captionText, targetId, analysisText }) {
+  const memory = await localMemoryIfUsable();
+  const style = memory
+    ? uniqueStrings([...(memory.styleTags || []), ...(memory.textPreferences || []), ...(memory.promptHints || [])]).slice(0, 10).join(", ")
+    : "";
+  const prompt = [
+    `Imagen para ${targetId || "publicación"}.`,
+    captionText,
+    style ? `Estilo: ${style}` : "",
+    analysisText,
+    "Genera una sola imagen usable en publicación. Sin texto enorme.",
+  ].filter(Boolean).join("\n");
+  if (!captionText) {
+    return { prompt: null, source: "flow-console-local", applied: false, error: "Escribe el texto de la pieza para el brief visual." };
+  }
+  return { prompt, source: "flow-console-local", applied: Boolean(style), error: style ? null : "Sin estilo guardado: brief desde el texto de la pieza." };
+}
+
+async function openaiChat({ messages, model, temperature = 0.4, maxTokens = 2500, json = false }) {
+  if (!openaiApiKey) {
+    const error = new Error("Falta OPENAI_API_KEY. No hay ChatGPT.");
+    error.status = 503;
+    throw error;
+  }
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+      ...(json ? { response_format: { type: "json_object" } } : {}),
+    }),
+    signal: AbortSignal.timeout(90000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `ChatGPT respondió ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return {
+    text: String(body?.choices?.[0]?.message?.content || "").trim(),
+    model: body?.model || model,
+  };
+}
+
+function openaiImageSizes(aspect) {
+  if (aspect === "16-9") return ["1792x1024", "1536x1024", "1024x1024"];
+  if (aspect === "4-5") return ["1024x1792", "1024x1536", "1024x1024"];
+  return ["1024x1024"];
+}
+
+async function generateImageWithChatGpt(prompt, { aspect = "original" } = {}) {
+  if (!openaiApiKey) {
+    const error = new Error("Falta OPENAI_API_KEY. No se genera imagen IA.");
+    error.status = 503;
+    throw error;
+  }
+  const models = uniqueStrings([openaiImageModel, "gpt-image-1", "dall-e-3"]);
+  const sizes = openaiImageSizes(aspect);
+  let lastError = new Error("ChatGPT no devolvió imagen.");
+  for (const model of models) {
+    for (const size of sizes) {
+      try {
+        const payload = {
+          model,
+          prompt: prompt.slice(0, 4000),
+          n: 1,
+          size,
+        };
+        if (model.startsWith("dall-e")) payload.response_format = "b64_json";
+        const response = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${openaiApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(90000),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          lastError = new Error(body?.error?.message || `ChatGPT imagen ${response.status} (${model})`);
+          continue;
+        }
+        const item = body?.data?.[0] || {};
+        if (item.b64_json) {
+          return { dataUrl: `data:image/png;base64,${item.b64_json}`, model, source: "chatgpt" };
+        }
+        if (item.url) {
+          const imageResponse = await fetch(item.url, { signal: AbortSignal.timeout(30000) });
+          if (!imageResponse.ok) {
+            lastError = new Error(`No se pudo descargar la imagen de ChatGPT (${model}).`);
+            continue;
+          }
+          const bytes = Buffer.from(await imageResponse.arrayBuffer());
+          const mime = String(imageResponse.headers.get("content-type") || "image/png").split(";")[0] || "image/png";
+          return { dataUrl: `data:${mime};base64,${bytes.toString("base64")}`, model, source: "chatgpt" };
+        }
+        lastError = new Error(`ChatGPT (${model}) no devolvió imagen.`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+  lastError.status = lastError.status || 502;
+  throw lastError;
+}
+
+function parseModelJson(raw) {
+  const text = normalizeVisionText(raw);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function generateChatGptJson(prompt, { temperature = 0.4, maxOutputTokens = 2500 } = {}) {
+  if (!openaiApiKey) {
+    const error = new Error("Falta OPENAI_API_KEY.");
+    error.status = 503;
+    throw error;
+  }
+  const models = uniqueStrings([openaiTextModel, "gpt-4o", "gpt-4o-mini"]);
+  let lastError = new Error("ChatGPT no devolvió JSON.");
+  for (const model of models) {
+    try {
+      const result = await openaiChat({
+        messages: [
+          { role: "system", content: "Responde solo JSON válido, sin markdown." },
+          { role: "user", content: prompt.slice(0, 12000) },
+        ],
+        model,
+        temperature,
+        maxTokens: maxOutputTokens,
+        json: true,
+      });
+      const parsed = parseModelJson(result.text);
+      if (parsed) return { parsed, model: result.model, raw: result.text };
+      lastError = new Error(`ChatGPT (${model}) no devolvió JSON usable.`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  lastError.status = lastError.status || 502;
+  throw lastError;
+}
+
+async function generateVariantsWithChatGpt({
+  enrichedBody,
+  channelInstruction,
+  requestedVariants,
+  memory,
+  brainInstruction = "",
+  visualAnalysis = null,
+}) {
+  const material = String(enrichedBody?.material || "").trim();
+  if (!material) {
+    const error = new Error("No hay material para generar.");
+    error.status = 400;
+    throw error;
+  }
+  const prompt = [
+    "Eres redactor de Flow Console. Devuelve solo JSON: {\"variantes\":[\"...\"]}.",
+    `Número de variantes: ${requestedVariants}. Cada una lista para publicar. Sin explicar el proceso.`,
+    channelInstruction,
+    generatorIntentInstruction(enrichedBody?.intencion),
+    generatorSourceMaterialInstruction(enrichedBody),
+    brainInstruction ? `Instrucción del cerebro editorial:\n${brainInstruction}` : "",
+    memory ? generatorMemoryInstruction(memory) : "",
+    visualAnalysis && !visualAnalysis.error ? visualAnalysisMemoryText(visualAnalysis) : "",
+    String(enrichedBody?.instrucciones || "").trim(),
+    "Material:",
+    material.slice(0, 8000),
+  ].filter(Boolean).join("\n\n");
+  const { parsed, model } = await generateChatGptJson(prompt, { temperature: 0.65, maxOutputTokens: 3500 });
+  const variants = uniqueStrings(
+    (Array.isArray(parsed?.variantes) ? parsed.variantes : Array.isArray(parsed) ? parsed : [parsed?.text || parsed?.caption || ""])
+      .map((item) => String(item || "").trim()),
+    requestedVariants,
+  ).filter((item) => item.length >= 12);
+  if (!variants.length) {
+    const error = new Error("ChatGPT no escribió variantes de texto.");
+    error.status = 502;
+    throw error;
+  }
+  return { variantes: variants.slice(0, requestedVariants), model };
+}
+
+async function generateWithChatGptFallback({
+  enrichedBody,
+  channelInstruction,
+  requestedVariants,
+  visualAnalysis,
+  contribution = null,
+}) {
+  if (!openaiApiKey) {
+    const error = new Error("No hay cerebro que escriba, ni n8n, ni OPENAI_API_KEY. No se puede generar texto.");
+    error.status = 503;
+    throw error;
+  }
+  const memory = contribution?.memory && memoryIsUsable(contribution.memory)
+    ? contribution.memory
+    : await localMemoryIfUsable();
+  const generated = await generateVariantsWithChatGpt({
+    enrichedBody,
+    channelInstruction,
+    requestedVariants,
+    memory,
+    brainInstruction: contribution?.instruction || "",
+    visualAnalysis,
+  });
+  const usage = memory
+    ? await recordEditorialBrainUsage(memory)
+    : { recorded: false, memory: null, error: null };
+  return {
+    ok: true,
+    source: "chatgpt",
+    model: generated.model,
+    variantes: generated.variantes,
+    rag_memory: usage.memory,
+    visual_analysis: visualAnalysis,
+    editorial_brain: contribution
+      ? brainClientReport(contribution, {
+          live: Boolean(contribution.usable || contribution.source),
+          applied: Boolean(contribution.usable),
+          wroteText: false,
+          usageRecorded: usage.recorded,
+          usageError: usage.error,
+        })
+      : {
+          configured: false,
+          live: false,
+          applied: false,
+          wroteText: false,
+          usageRecorded: Boolean(memory) && usage.recorded,
+          usageError: memory ? usage.error : null,
+        },
+  };
+}
+
+async function assessRagWithChatGpt(input) {
+  const material = [
+    input.description,
+    input.text,
+    input.url,
+    input.file?.name,
+    visualAnalysisMemoryText(input.visualAnalysis),
+  ].filter(Boolean).join("\n\n").slice(0, 8000);
+  if (!material.trim()) {
+    const error = new Error("No hay material que valorar.");
+    error.status = 400;
+    throw error;
+  }
+  const prompt = [
+    "Valora este material como estilo reutilizable para un generador editorial.",
+    "Devuelve solo JSON con: tipo (ejemplo_copy|spec|nota|prompt_previo), resumen, utilidad_rag (alta|media|baja), aviso, tags, topics, textPreferences, styleTags, promptHints, authorProfile, stanceTags, evidenceNotes, confidence (alta|media|baja), sugerencia_chunking (por secciones|por párrafos|documento completo|por chunks|descripcion + OCR).",
+    "No inventes autor ni postura si no está en el material.",
+    material,
+  ].join("\n\n");
+  const { parsed } = await generateChatGptJson(prompt, { temperature: 0.2, maxOutputTokens: 1600 });
+  return cleanRagAssessment({ ...parsed, proyecto: "generador-contenido" });
+}
+
+function assessRagFromMaterial(input) {
+  const text = String(input.text || input.description || input.url || input.file?.name || "").trim();
+  const words = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .match(/\b[\p{L}\p{N}]{4,24}\b/gu) || [];
+  const counts = new Map();
+  for (const word of words) counts.set(word, (counts.get(word) || 0) + 1);
+  const tags = [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8)
+    .map(([word]) => word);
+  return cleanRagAssessment({
+    tipo: input.url ? "nota" : input.file ? "spec" : "nota",
+    proyecto: "generador-contenido",
+    resumen: text.slice(0, 280) || "Material para estilo.",
+    utilidad_rag: input.preferredUtility || "media",
+    tags,
+    topics: tags.slice(0, 6),
+    sugerencia_chunking: input.file ? "documento completo" : "por párrafos",
+    aviso: "Valoración local a partir del propio material. No es el cerebro.",
+  });
+}
+
+async function searchLocalConsole(keyword) {
+  const needle = String(keyword || "").trim().toLowerCase();
+  if (!needle) throw new Error("Escribe una palabra para buscar");
+  const [posts, notes, tasks, memory] = await Promise.all([
+    readPublicationPosts().catch(() => []),
+    readCalendarNotes().catch(() => []),
+    readCalendarTasks().catch(() => []),
+    readRagMemory().catch(() => emptyRagMemory()),
+  ]);
+  const hit = (value) => String(value || "").toLowerCase().includes(needle);
+  const items = [];
+  for (const post of posts) {
+    if (!hit(post.caption) && !hit(post.target?.name) && !hit(post.status)) continue;
+    items.push({
+      title: `${post.target?.name || "Publicación"} · ${post.status || ""}`,
+      summary: String(post.caption || "").slice(0, 280),
+      source: "publicaciones",
+      publishedAt: post.publishedAt || post.scheduledAt || post.createdAt || "",
+      url: post.publicUrl || post.imageUrl || "",
+    });
+  }
+  for (const note of notes) {
+    if (!hit(note.body) && !hit(note.title)) continue;
+    items.push({
+      title: String(note.title || "Nota").slice(0, 120),
+      summary: String(note.body || "").slice(0, 280),
+      source: "libreta",
+      publishedAt: note.updatedAt || note.createdAt || "",
+    });
+  }
+  for (const task of tasks) {
+    if (!hit(task.title) && !hit(task.notes) && !hit(task.project)) continue;
+    items.push({
+      title: task.title,
+      summary: String(task.notes || task.project || "").slice(0, 280),
+      source: "calendario",
+      publishedAt: task.dueDate || task.updatedAt || "",
+    });
+  }
+  for (const document of memory.documents || []) {
+    const blob = [document.title, document.nombre, ...(document.tags || []), ...(document.topics || []), document.content].join(" ");
+    if (!hit(blob)) continue;
+    items.push({
+      title: document.title || document.nombre || "Estilo",
+      summary: String(document.content || (document.tags || []).join(", ")).slice(0, 280),
+      source: "estilo",
+      publishedAt: document.updatedAt || document.createdAt || memory.updatedAt || "",
+    });
+  }
+  return {
+    ok: true,
+    keyword,
+    label: keyword,
+    provider: "flow-console-local",
+    source: "flow-console-local",
+    receivedAt: new Date().toISOString(),
+    items: items.slice(0, 20),
+    text: items.length
+      ? `${items.length} resultado${items.length === 1 ? "" : "s"} en publicaciones, notas, calendario y estilo.`
+      : "Sin coincidencias en esta consola.",
+  };
+}
+
+function workflowRunPathFromNodes(workflow) {
+  const nodes = workflow?.nodes || [];
+  const webhook = nodes.find((node) => {
+    const type = String(node.type || "");
+    return /webhook/i.test(type) && !/formTrigger|wait/i.test(type);
+  });
+  if (!webhook) return "";
+  return String(webhook.parameters?.path || webhook.webhookId || "").replace(/^\/+/, "").trim();
+}
+
+function workflowCanRun(workflow) {
+  return Boolean(runnableWorkflows[workflow.id] || workflowRunPathFromNodes(workflow));
+}
+
+async function resolveWorkflowWebhook(id) {
+  if (runnableWorkflows[id]) return runnableWorkflows[id];
+  const workflow = await n8n(`/workflows/${encodeURIComponent(id)}`);
+  const pathName = workflowRunPathFromNodes(workflow);
+  if (pathName) return pathName;
+  const error = new Error("Este workflow no tiene webhook para lanzarlo desde la consola.");
+  error.status = 404;
+  throw error;
 }
 
 function visualAnalysisMemoryText(analysis) {
@@ -1875,6 +2451,24 @@ function publicationMemoryAssessment(post, visualAnalysis = null) {
   };
 }
 
+function publicationTrainingRecord(training) {
+  return {
+    learned: Boolean(training?.learned),
+    source: training?.source || null,
+    error: training?.error || null,
+    at: new Date().toISOString(),
+  };
+}
+
+function publicationTrainingResponse(training) {
+  return {
+    learned: Boolean(training?.learned),
+    trainingError: training?.error || null,
+    trainingSource: training?.source || null,
+    memory: training?.memory || null,
+  };
+}
+
 async function rememberPublicationInTraining(post) {
   const tags = publicationMemoryTags(post);
   const visual = publicationVisualMemory(post);
@@ -1893,8 +2487,9 @@ async function rememberPublicationInTraining(post) {
     tags,
     content,
   };
-  if (editorialBrainEnabled()) {
-    try {
+  const source = editorialBrainEnabled() ? "editorial-brain" : "flow-console-local-rag";
+  try {
+    if (editorialBrainEnabled()) {
       const result = await callEditorialBrain("/api/rag/ingestar", {
         method: "POST",
         body: JSON.stringify({
@@ -1919,13 +2514,20 @@ async function rememberPublicationInTraining(post) {
           tags,
         }),
       });
-      return result.memory || null;
-    } catch (error) {
-      console.warn(`No se pudo enviar publicación al cerebro editorial: ${error.message}`);
-      return null;
+      const memory = result.memory
+        ? (result.memory.documentCount !== undefined ? result.memory : generatorMemoryPayload(result.memory))
+        : null;
+      return { learned: true, source, memory, error: null };
     }
+    const stored = await rememberRagDocumentSoft(document, assessment);
+    if (!stored) {
+      return { learned: false, source, memory: null, error: "La memoria local no guardó el documento." };
+    }
+    return { learned: true, source, memory: generatorMemoryPayload(stored), error: null };
+  } catch (error) {
+    console.warn(`No se pudo enviar publicación al aprendizaje: ${error.message}`);
+    return { learned: false, source, memory: null, error: error.message };
   }
-  return rememberRagDocumentSoft(document, assessment);
 }
 
 function dateKey(value) {
@@ -2321,6 +2923,56 @@ async function writeCalendarSignals(value) {
   });
 }
 
+function calendarSignalId(item, now) {
+  const raw = String(item?.id || "").trim();
+  if (raw.startsWith("brain:")) return raw.slice(0, 220);
+  if (raw) return `brain:${raw}`.slice(0, 220);
+  const title = String(item?.title || "Aviso del cerebro").trim().slice(0, 180);
+  return `brain:${crypto.createHash("sha1").update(`${title}:${item?.date || now}`).digest("hex").slice(0, 16)}`;
+}
+
+function extractBrainSignals(body) {
+  if (!body || typeof body !== "object") return [];
+  const raw = body.signals || body.items || body.calendarSignals || body.calendar_signals;
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw).map(([id, signal]) => ({
+      id,
+      ...(signal && typeof signal === "object" ? signal : {}),
+    }));
+  }
+  return [];
+}
+
+async function mergeIncomingCalendarSignals(incoming, existing = null) {
+  const signals = existing && typeof existing === "object" ? existing : await readCalendarSignals();
+  const now = new Date().toISOString();
+  const saved = [];
+  for (const item of (Array.isArray(incoming) ? incoming : []).slice(0, 40)) {
+    const title = String(item.title || "Aviso del cerebro").trim().slice(0, 180);
+    if (!title && !item.fullText && !item.body && !item.subtitle) continue;
+    const id = calendarSignalId(item, now);
+    signals[id] = {
+      ...signals[id],
+      status: signals[id]?.status || "pending",
+      source: String(item.source || "editorial-brain"),
+      kind: String(item.kind || "Consejo"),
+      date: String(item.date || signals[id]?.date || now),
+      title: title || signals[id]?.title || "Aviso del cerebro",
+      subtitle: String(item.subtitle || signals[id]?.subtitle || "").slice(0, 260),
+      fullText: String(item.fullText || item.body || signals[id]?.fullText || "").slice(0, 3000),
+      actionView: String(item.actionView || signals[id]?.actionView || ""),
+      actionTarget: String(item.actionTarget || signals[id]?.actionTarget || ""),
+      payload: item.payload && typeof item.payload === "object" ? item.payload : (signals[id]?.payload || {}),
+      createdAt: signals[id]?.createdAt || now,
+      updatedAt: now,
+    };
+    saved.push({ id, ...signals[id] });
+  }
+  if (saved.length) await writeCalendarSignals(signals);
+  return { signals, saved };
+}
+
 function addCalendarDays(value, amount) {
   const date = new Date(`${dateKey(value)}T12:00:00`);
   date.setDate(date.getDate() + amount);
@@ -2348,6 +3000,7 @@ function cleanCalendarTask(value, current = {}) {
     time: /^\d{2}:\d{2}$/.test(time) ? time : "",
     status,
     project: String(value?.project ?? current.project ?? "").trim().slice(0, 80),
+    publicationPostId: String(value?.publicationPostId ?? current.publicationPostId ?? "").trim().slice(0, 80),
     recurrence: current.recurrence || null,
     createdAt: current.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -3767,7 +4420,17 @@ async function publishPublicationPayload(payload, source = "flow-console") {
     error.status = response.status || 502;
     throw error;
   }
-  return flowResult;
+  return {
+    ...flowResult,
+    editorial_brain: brain.applied
+      ? { configured: true, applied: true, sentToN8n: true, source: brain.source }
+      : {
+          configured: Boolean(brain.configured),
+          applied: false,
+          sentToN8n: false,
+          error: brain.error || undefined,
+        },
+  };
 }
 
 async function rememberPublishedCalendarTask(post) {
@@ -4441,6 +5104,56 @@ async function rememberEditorialBrainUsage(memoryPayload) {
   return result.memory || memoryPayload;
 }
 
+async function recordEditorialBrainUsage(memoryPayload) {
+  try {
+    const memory = await rememberEditorialBrainUsage(memoryPayload);
+    return { recorded: true, memory, error: null };
+  } catch (error) {
+    return { recorded: false, memory: memoryPayload, error: error.message };
+  }
+}
+
+async function fetchEditorialBrainSignals() {
+  if (!editorialBrainEnabled()) {
+    return { configured: false, live: false, pulled: false, incoming: [], error: null, source: null };
+  }
+  const missing = new Set([404, 405, 501]);
+  for (const pathname of ["/api/calendar/signals", "/api/brain/signals"]) {
+    try {
+      const body = await callEditorialBrain(pathname, { method: "GET", timeoutMs: 20000 });
+      return {
+        configured: true,
+        live: true,
+        pulled: true,
+        incoming: extractBrainSignals(body),
+        error: null,
+        source: `editorial-brain${pathname}`,
+      };
+    } catch (error) {
+      if (!missing.has(Number(error.status))) {
+        return { configured: true, live: false, pulled: false, incoming: [], error: error.message, source: null };
+      }
+    }
+  }
+  try {
+    const body = await queryEditorialBrain({
+      task: "calendar_signals",
+      from: dateKey(addCalendarDays(new Date(), -14)),
+      to: dateKey(addCalendarDays(new Date(), 21)),
+    });
+    return {
+      configured: true,
+      live: true,
+      pulled: true,
+      incoming: extractBrainSignals(body),
+      error: null,
+      source: body.source || "editorial-brain/query",
+    };
+  } catch (error) {
+    return { configured: true, live: false, pulled: false, incoming: [], error: error.message, source: null };
+  }
+}
+
 async function rememberEditorialBrainFeedback(feedback) {
   if (!editorialBrainEnabled()) return rememberGeneratorFeedback(feedback);
   return callEditorialBrain("/api/brain/feedback", {
@@ -4551,7 +5264,43 @@ function dataUrlBuffer(dataUrl) {
     : Buffer.from(decodeURIComponent(match[3]), "utf8");
 }
 
+function ragFileIsImage(file) {
+  const mime = String(file?.type || "").split(";")[0];
+  const name = String(file?.name || "");
+  return /^image\/(jpeg|png|webp|gif)$/i.test(mime) || /\.(jpe?g|png|webp|gif)$/i.test(name);
+}
+
 async function enrichRagInput(input) {
+  if (input.inputType === "url" && input.urlProfile?.kind === "image_url" && input.url) {
+    const visualAnalysis = await analyzePublicationImage(
+      { caption: input.description, target: { name: "Añadir" } },
+      { mediaUrl: input.url, mediaKind: "imagen" },
+    );
+    return {
+      ...input,
+      visualAnalysis,
+      text: [
+        String(input.text || "").trim(),
+        visualAnalysis && !visualAnalysis.error ? visualAnalysisMemoryText(visualAnalysis) : "",
+        visualAnalysis?.error ? `No hay análisis visual real: ${visualAnalysis.error}` : "",
+      ].filter(Boolean).join("\n\n"),
+    };
+  }
+  if (input.inputType === "file" && ragFileIsImage(input.file)) {
+    const visualAnalysis = await analyzeImageFromDataUrl(input.file.dataUrl, {
+      caption: input.description || input.file?.name || "",
+      channel: "Añadir",
+    });
+    return {
+      ...input,
+      visualAnalysis,
+      text: [
+        String(input.text || "").trim(),
+        visualAnalysis && !visualAnalysis.error ? visualAnalysisMemoryText(visualAnalysis) : "",
+        visualAnalysis?.error ? `No hay análisis visual real: ${visualAnalysis.error}` : "",
+      ].filter(Boolean).join("\n\n"),
+    };
+  }
   if (input.inputType !== "file" || input.text) return input;
   const bytes = dataUrlBuffer(input.file?.dataUrl);
   if (!bytes?.length) return input;
@@ -4587,10 +5336,12 @@ function cleanGeneratorFile(value) {
 }
 
 async function enrichGeneratorBody(body) {
-  const materialTipo = String(body?.materialTipo || "");
+  const materialTipo = ["Foto", "Imagen"].includes(String(body?.materialTipo || "")) ? "Imagen" : String(body?.materialTipo || "");
   const file = cleanGeneratorFile(body?.materialFile || body?.material_file);
-  const visualMaterial = ["Imagen", "Foto"].includes(materialTipo);
-  if (!file || !["Imagen", "Foto", "PDF"].includes(materialTipo)) return { body, file: null, extractedText: "" };
+  const visualMaterial = materialTipo === "Imagen";
+  if (!file || !["Imagen", "PDF"].includes(materialTipo)) {
+    return { body: { ...body, materialTipo }, file: null, extractedText: "", visualAnalysis: null };
+  }
   const bytes = dataUrlBuffer(file.dataUrl);
   const name = file.name || "";
   const mimeType = file.type || "";
@@ -4604,17 +5355,25 @@ async function enrichGeneratorBody(body) {
       await parser.destroy().catch(() => {});
     }
   }
+  let visualAnalysis = null;
+  if (visualMaterial) {
+    visualAnalysis = await analyzeImageFromDataUrl(file.dataUrl, {
+      caption: body?.currentCaption || body?.material || "",
+      channel: body?.targetId || body?.destino || body?.formato || "",
+    });
+  }
   const materialParts = [
     String(body?.material || "").trim(),
     extractedText ? `\n\nTexto extraído del PDF ${name}:\n${extractedText}` : "",
+    visualAnalysis && !visualAnalysis.error ? `\n\nAnálisis visual real:\n${visualAnalysisMemoryText(visualAnalysis)}` : "",
   ].filter(Boolean);
   const mediaInstruction = visualMaterial
     ? [
-        `Hay una ${materialTipo === "Foto" ? "foto" : "imagen"} adjunta en material_file.dataUrl.`,
-        "Analiza visualmente la foto o imagen antes de escribir: elementos visibles, composición, época/estética sugerida, texto legible, relación con las notas del usuario y tesis que permite defender.",
-        "No te limites a resumir el texto del usuario ni a listar oportunidades obvias. Convierte la imagen en argumento.",
-        "Si el usuario pide analizar, entrega criterio editorial útil y una dirección de publicación. Si pide crear o publicar, entrega texto listo para usar.",
-        "No digas que no puedes ver la imagen si el flujo/modelo tiene visión; si el modelo no soporta visión, responde indicando que falta análisis visual real.",
+        `Hay una imagen adjunta.`,
+        visualAnalysis?.error
+          ? `No hay análisis visual real: ${visualAnalysis.error}`
+          : "Usa el análisis visual real adjunto. Convierte la imagen en argumento, no en un resumen genérico.",
+        "Si el usuario pide crear o publicar, entrega texto listo para el canal.",
       ].join(" ")
     : extractedText
       ? `El PDF ${name} ya tiene texto extraído en material. Basa el contenido en ese texto, no solo en el nombre del archivo.`
@@ -4622,6 +5381,7 @@ async function enrichGeneratorBody(body) {
   return {
     body: {
       ...body,
+      materialTipo,
       material: materialParts.join("\n").trim() || body?.material || "",
       material_file: {
         ...file,
@@ -4632,6 +5392,7 @@ async function enrichGeneratorBody(body) {
         type: file.type,
         dataUrl: file.dataUrl,
       } : null,
+      visual_analysis: visualAnalysis,
       materialFile: undefined,
       extracted_text: extractedText,
       extractedText,
@@ -4645,6 +5406,7 @@ async function enrichGeneratorBody(body) {
     },
     file,
     extractedText,
+    visualAnalysis,
   };
 }
 
@@ -4844,7 +5606,7 @@ function noticeFromItem(execution, workflow, candidate, index, state) {
     trashed: Boolean(noticeState.trashed),
     done: noticeState.status === "managed",
     canRetry: ["error", "crashed", "canceled"].includes(execution.status),
-    canRun: Boolean(runnableWorkflows[workflow.id]),
+    canRun: Boolean(workflow.canRun || runnableWorkflows[workflow.id] || workflowRunPathFromNodes(workflow)),
     formUrl: workflow.formUrl || null,
   };
 }
@@ -5046,6 +5808,64 @@ app.post("/api/publications/preflight", requireAuth, async (req, res) => {
   }
 });
 
+app.post("/api/publications/vision", requireAuth, async (req, res) => {
+  try {
+    const imageUrl = safeUrl(req.body?.imageUrl);
+    const dataUrl = String(req.body?.dataUrl || "");
+    const caption = String(req.body?.caption || "").slice(0, 1400);
+    const channel = String(req.body?.targetId || req.body?.target?.name || "Publicaciones");
+    let analysis;
+    if (dataUrl.startsWith("data:image/")) {
+      analysis = await analyzeImageFromDataUrl(dataUrl, { caption, channel, aspect: req.body?.aspect });
+    } else if (imageUrl) {
+      analysis = await analyzePublicationImage(
+        { caption, target: { name: channel, id: req.body?.targetId } },
+        { mediaUrl: imageUrl, mediaKind: "imagen", aspect: req.body?.aspect },
+      );
+    } else {
+      return res.status(400).json({ error: "Pasa una imagen (URL o archivo) para analizar." });
+    }
+    if (!analysis) return res.status(400).json({ error: "No hay imagen que analizar." });
+    res.json({ ok: !analysis.error, analysis, vision: Boolean(openaiApiKey) });
+  } catch (error) {
+    res.status(500).json({ error: `No se pudo analizar la imagen: ${error.message}` });
+  }
+});
+
+app.post("/api/publications/generate-image", requireAuth, async (req, res) => {
+  try {
+    const caption = String(req.body?.caption || req.body?.prompt || "").trim();
+    const targetId = String(req.body?.targetId || "instagram");
+    const aspect = String(req.body?.aspect || "original");
+    if (!caption) return res.status(400).json({ error: "Escribe el texto o una instrucción para el brief visual." });
+    if (!openaiApiKey) {
+      return res.status(503).json({ error: "Falta OPENAI_API_KEY. No se genera imagen IA." });
+    }
+    const brief = await visualBriefForImage({ caption, targetId, aspect, analysis: req.body?.analysis || null });
+    if (!brief.prompt) {
+      return res.status(502).json({
+        error: brief.error || "No hay brief visual. El cerebro no aportó y no se finge una imagen.",
+        brief,
+      });
+    }
+    const generated = await generateImageWithChatGpt(brief.prompt, { aspect });
+    const stored = await storePublicationMedia(generated.dataUrl, req, { targetId });
+    const libraryFile = await copyPublicationMediaToLibrary(stored, targetId);
+    const items = await listPublicationLibrary(targetId, publicOrigin(req));
+    res.json({
+      ok: true,
+      ...stored,
+      libraryFile,
+      items,
+      brief,
+      model: generated.model,
+      source: generated.source || "chatgpt",
+    });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message });
+  }
+});
+
 app.get("/oauth/youtube/start", requireAuth, (req, res) => {
   try {
     res.redirect(youtubeOAuthUrl(req));
@@ -5224,7 +6044,7 @@ app.get("/api/workflows", requireAuth, async (_, res) => {
       formUrl: formTrigger?.parameters?.path
         ? `${n8nUrl}/form/${formTrigger.parameters.path}`
         : null,
-      canRun: Boolean(runnableWorkflows[workflow.id]),
+      canRun: workflowCanRun(workflow),
     };
     });
     res.json({ workflows, n8nUrl });
@@ -5246,7 +6066,7 @@ app.get("/api/notices", requireAuth, async (_, res) => {
         id: workflow.id,
         name: workflow.name,
         active: Boolean(workflow.active || workflow.activeVersionId),
-        canRun: Boolean(runnableWorkflows[workflow.id]),
+        canRun: workflowCanRun(workflow),
         formUrl: formTrigger?.parameters?.path
           ? `${n8nUrl}/form/${formTrigger.parameters.path}`
           : null,
@@ -5330,9 +6150,40 @@ app.post("/api/calendar/tasks", requireAuth, async (req, res) => {
   try {
     const tasks = await readCalendarTasks();
     const createdTasks = repeatedCalendarTasks(req.body);
+    const targets = await readPublicationTargets();
+    const posts = await readPublicationPosts();
+    const createdPosts = [];
+    const now = new Date().toISOString();
+    for (const task of createdTasks) {
+      const target = targets.find((item) => item.name === task.project || item.id === task.project);
+      if (!target || task.project === "Tarea") continue;
+      const scheduledAt = task.time
+        ? new Date(`${task.dueDate}T${task.time}:00`).toISOString()
+        : new Date(`${task.dueDate}T12:00:00`).toISOString();
+      const payload = cleanPublicationPayload({
+        action: "schedule",
+        caption: task.notes || task.title,
+        target,
+        targetId: target.id,
+        scheduledAt,
+      });
+      if (!payload.caption || !payload.scheduledAt) continue;
+      const post = {
+        id: crypto.randomUUID(),
+        ...payload,
+        status: "scheduled",
+        calendarTaskId: task.id,
+        fingerprint: publicationFingerprint(payload),
+        createdAt: now,
+        updatedAt: now,
+      };
+      createdPosts.push(post);
+      task.publicationPostId = post.id;
+    }
     tasks.push(...createdTasks);
     await writeCalendarTasks(tasks);
-    res.status(201).json({ task: createdTasks[0], tasks: createdTasks });
+    if (createdPosts.length) await writePublicationPosts([...createdPosts, ...posts].slice(0, 200));
+    res.status(201).json({ task: createdTasks[0], tasks: createdTasks, posts: createdPosts });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -5345,6 +6196,24 @@ app.patch("/api/calendar/tasks/:id", requireAuth, async (req, res) => {
     if (index === -1) return res.status(404).json({ error: "Tarea no encontrada" });
     tasks[index] = cleanCalendarTask(req.body, tasks[index]);
     await writeCalendarTasks(tasks);
+    const task = tasks[index];
+    if (task.publicationPostId) {
+      const posts = await readPublicationPosts();
+      const nextPosts = posts.map((post) => {
+        if (post.id !== task.publicationPostId) return post;
+        const scheduledAt = task.time
+          ? new Date(`${task.dueDate}T${task.time}:00`).toISOString()
+          : new Date(`${task.dueDate}T12:00:00`).toISOString();
+        return {
+          ...post,
+          caption: task.notes || post.caption,
+          scheduledAt,
+          status: post.status === "scheduled" || post.action === "schedule" ? "scheduled" : post.status,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      await writePublicationPosts(nextPosts);
+    }
     res.json({ task: tasks[index] });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -5594,7 +6463,25 @@ app.delete("/api/calendar/tasks/:id/series", requireAuth, async (req, res) => {
 
 app.get("/api/calendar/signals", requireAuth, async (_, res) => {
   try {
-    res.json({ signals: await readCalendarSignals() });
+    let signals = await readCalendarSignals();
+    const pull = await fetchEditorialBrainSignals();
+    let received = 0;
+    if (pull.incoming.length) {
+      const merged = await mergeIncomingCalendarSignals(pull.incoming, signals);
+      signals = merged.signals;
+      received = merged.saved.length;
+    }
+    res.json({
+      signals,
+      editorial_brain: {
+        configured: pull.configured,
+        live: pull.live,
+        pulled: pull.pulled,
+        received,
+        source: pull.source,
+        error: pull.error,
+      },
+    });
   } catch (error) {
     res.status(500).json({ error: `No se pudieron leer las señales: ${error.message}` });
   }
@@ -5606,6 +6493,7 @@ app.patch("/api/calendar/signals/:id", requireAuth, async (req, res) => {
     const status = ["pending", "managed", "ignored"].includes(req.body?.status) ? req.body.status : "pending";
     const signals = await readCalendarSignals();
     signals[id] = {
+      ...(signals[id] || {}),
       status,
       updatedAt: new Date().toISOString(),
     };
@@ -5620,30 +6508,7 @@ app.post("/api/internal/calendar/signals", requireInternalRag, async (req, res) 
   try {
     const incoming = Array.isArray(req.body?.signals) ? req.body.signals : [];
     if (!incoming.length) return res.status(400).json({ error: "No hay señales para guardar" });
-    const signals = await readCalendarSignals();
-    const now = new Date().toISOString();
-    const saved = [];
-    for (const item of incoming.slice(0, 20)) {
-      const title = String(item.title || "Aviso del cerebro").trim().slice(0, 180);
-      const id = String(item.id || `brain:${crypto.createHash("sha1").update(`${title}:${item.date || now}`).digest("hex").slice(0, 16)}`).slice(0, 220);
-      signals[id] = {
-        ...signals[id],
-        status: signals[id]?.status || "pending",
-        source: String(item.source || "editorial-brain"),
-        kind: String(item.kind || "Consejo"),
-        date: String(item.date || now),
-        title,
-        subtitle: String(item.subtitle || "").slice(0, 260),
-        fullText: String(item.fullText || item.body || "").slice(0, 3000),
-        actionView: String(item.actionView || ""),
-        actionTarget: String(item.actionTarget || ""),
-        payload: item.payload && typeof item.payload === "object" ? item.payload : {},
-        createdAt: signals[id]?.createdAt || now,
-        updatedAt: now,
-      };
-      saved.push({ id, ...signals[id] });
-    }
-    await writeCalendarSignals(signals);
+    const { saved } = await mergeIncomingCalendarSignals(incoming);
     res.json({ ok: true, saved });
   } catch (error) {
     res.status(400).json({ error: `No se pudieron guardar señales internas: ${error.message}` });
@@ -5683,7 +6548,8 @@ app.get("/api/rag/status", requireAuth, async (_, res) => {
             updatedAt: ragWorkflow.updatedAt,
           }
         : null,
-      ready: Boolean(ragWorkflow && (ragWorkflow.active || ragWorkflow.activeVersionId)),
+      ready: Boolean((ragWorkflow && (ragWorkflow.active || ragWorkflow.activeVersionId)) || openaiApiKey),
+      chatgpt: Boolean(openaiApiKey),
       memory: generatorMemoryPayload(memory),
     });
   } catch (error) {
@@ -5695,7 +6561,8 @@ app.get("/api/rag/status", requireAuth, async (_, res) => {
       valorarWebhook: ragValorarWebhook,
       ingestarWebhook: ragIngestarWebhook,
       workflow: null,
-      ready: false,
+      ready: Boolean(openaiApiKey),
+      chatgpt: Boolean(openaiApiKey),
       memory: memory ? generatorMemoryPayload(memory) : null,
       error: error.message,
     };
@@ -5704,17 +6571,30 @@ app.get("/api/rag/status", requireAuth, async (_, res) => {
   }
 });
 
-app.get("/api/rag/memory", requireAuth, async (_, res) => {
+app.get("/api/rag/memory", requireAuth, async (req, res) => {
   try {
+    const view = String(req.query.view || "");
     if (editorialBrainEnabled()) {
-      const memory = await callEditorialBrain("/api/rag/memory", { method: "GET", timeoutMs: 30000 });
-      return res.json({ ...memory, externalBrain: true });
+      try {
+        const pathname = view === "correct" ? "/api/rag/memory?view=correct" : "/api/rag/memory";
+        const memory = await callEditorialBrain(pathname, { method: "GET", timeoutMs: 30000 });
+        return res.json({ ...memory, externalBrain: true, live: true });
+      } catch (error) {
+        if (view === "correct" && [400, 404, 405, 501].includes(Number(error.status))) {
+          const memory = await callEditorialBrain("/api/rag/memory", { method: "GET", timeoutMs: 30000 });
+          return res.json({ ...memory, externalBrain: true, live: true });
+        }
+        throw error;
+      }
     }
     const memory = await withRagMemoryUpdate(async (currentMemory, client) => {
       await writeRagMemory(currentMemory, client);
       return currentMemory;
     });
-    res.json({ ok: true, memory: generatorMemoryPayload(memory) });
+    res.json({
+      ok: true,
+      memory: view === "correct" ? correctMemoryPayload(memory) : generatorMemoryPayload(memory),
+    });
   } catch (error) {
     res.status(500).json({ error: `No se pudo leer la memoria RAG: ${error.message}` });
   }
@@ -5724,11 +6604,7 @@ app.post("/api/rag/memory/clean", requireAuth, async (req, res) => {
   let client;
   try {
     if (editorialBrainEnabled()) {
-      const result = await callEditorialBrain("/api/rag/memory/clean", {
-        method: "POST",
-        body: JSON.stringify(req.body || {}),
-        timeoutMs: 30000,
-      });
+      const result = await cleanEditorialBrainMemory(req.body || {});
       return res.json({ ...result, externalBrain: true });
     }
     client = await getPgPool().connect();
@@ -5849,6 +6725,29 @@ app.post("/api/rag/memory/clean", requireAuth, async (req, res) => {
         next.usage[bucket][replacement] = (Number(next.usage[bucket][replacement]) || 0) + Number(next.usage[bucket][tag] || 0);
         delete next.usage[bucket][tag];
       }
+    } else if (action === "rename-item" && value && replacement) {
+      const fields = categoryFields(category);
+      const rename = (values) => uniqueStrings((values || []).map((item) =>
+        canonicalMemoryKey(item) === canonicalMemoryKey(value) ? replacement : item,
+      ));
+      for (const key of fields.memory) {
+        next[key] = rename(next[key]);
+      }
+      next.documents = next.documents.map((document) => {
+        const updated = { ...document };
+        for (const key of fields.documents) {
+          updated[key] = rename(updated[key]);
+        }
+        return updated;
+      });
+      for (const bucket of fields.usage) {
+        if (!next.usage[bucket]) continue;
+        for (const key of Object.keys(next.usage[bucket])) {
+          if (canonicalMemoryKey(key) !== canonicalMemoryKey(value)) continue;
+          next.usage[bucket][replacement] = (Number(next.usage[bucket][replacement]) || 0) + Number(next.usage[bucket][key] || 0);
+          delete next.usage[bucket][key];
+        }
+      }
     } else if (action === "delete-document" && documentId) {
       next.documents = next.documents.filter((document) => document.id !== documentId);
       delete next.usage.documents?.[documentId];
@@ -5869,7 +6768,7 @@ app.post("/api/rag/memory/clean", requireAuth, async (req, res) => {
     next.updatedAt = new Date().toISOString();
     await writeRagMemory(next, client);
     await client.query("commit");
-    res.json({ ok: true, memory: generatorMemoryPayload(next) });
+    res.json({ ok: true, memory: correctMemoryPayload(next) });
   } catch (error) {
     await client?.query("rollback").catch(() => {});
     res.status(500).json({ error: `No se pudo limpiar la memoria: ${error.message}` });
@@ -5880,18 +6779,33 @@ app.post("/api/rag/memory/clean", requireAuth, async (req, res) => {
 
 app.post("/api/rag/valorar", requireAuth, async (req, res) => {
   try {
-    if (editorialBrainEnabled()) {
-      const result = await callEditorialBrain("/api/rag/valorar", {
-        method: "POST",
-        body: JSON.stringify(req.body || {}),
-      });
-      return res.json({ ...result, externalBrain: true });
-    }
     const input = await enrichRagInput(cleanRagInput(req.body));
+    if (editorialBrainEnabled()) {
+      try {
+        const result = await callEditorialBrain("/api/rag/valorar", {
+          method: "POST",
+          body: JSON.stringify({
+            ...req.body,
+            ...input,
+            visual_analysis: input.visualAnalysis || null,
+          }),
+        });
+        return res.json({
+          ...result,
+          input,
+          visual_analysis: input.visualAnalysis || result.visual_analysis || null,
+          externalBrain: true,
+        });
+      } catch (brainError) {
+        if (!openaiApiKey && !n8nUrl) throw brainError;
+      }
+    }
     const memory = await readRagMemory().catch(() => emptyRagMemory());
     const memoryPayload = generatorMemoryPayload(memory);
-    const payload = {
-      tipo_material: input.inputType === "file" ? input.file.type || "Archivo" : input.inputType === "url" ? "URL" : "Texto",
+    if (n8nUrl) {
+      try {
+        const payload = {
+          tipo_material: input.inputType === "file" ? input.file.type || "Archivo" : input.inputType === "url" ? "URL" : "Texto",
       input_type: input.inputType,
       project_hint: input.project,
       proyecto_hint: input.project,
@@ -5907,6 +6821,7 @@ app.post("/api/rag/valorar", requireAuth, async (req, res) => {
       profile_goal: input.urlProfile?.profileGoal || null,
       should_search_web: Boolean(input.urlProfile?.shouldSearchWeb),
       file: input.file,
+      visual_analysis: input.visualAnalysis || null,
       rag_memory: memoryPayload,
       memoria_rag: memoryPayload,
       expected_schema: {
@@ -5929,11 +6844,32 @@ app.post("/api/rag/valorar", requireAuth, async (req, res) => {
       requested_at: new Date().toISOString(),
       source: "flow-console-rag-entry",
     };
-    const result = await callN8nWebhook(ragValorarWebhook, payload);
-    const rawAssessment = extractRagAssessmentCandidate(result);
-    const assessment = cleanRagAssessment(rawAssessment);
-    assertUsefulRagAssessment(rawAssessment, assessment);
-    res.json({ ok: true, input, assessment, memory: memoryPayload, raw: result });
+        const result = await callN8nWebhook(ragValorarWebhook, payload);
+        const rawAssessment = extractRagAssessmentCandidate(result);
+        const assessment = cleanRagAssessment(rawAssessment);
+        assertUsefulRagAssessment(rawAssessment, assessment);
+        return res.json({ ok: true, input, assessment, visual_analysis: input.visualAnalysis || null, memory: memoryPayload, raw: result });
+      } catch (n8nError) {
+        if (!openaiApiKey) throw n8nError;
+      }
+    }
+    let assessment;
+    let source = "flow-console-local";
+    if (openaiApiKey) {
+      assessment = await assessRagWithChatGpt(input);
+      source = "chatgpt";
+    } else {
+      assessment = assessRagFromMaterial({ ...input, preferredUtility: req.body?.preferredUtility });
+    }
+    assertUsefulRagAssessment(assessment, assessment);
+    res.json({
+      ok: true,
+      input,
+      assessment,
+      visual_analysis: input.visualAnalysis || null,
+      memory: memoryPayload,
+      source,
+    });
   } catch (error) {
     res.status(error.status || 502).json({ error: error.message });
   }
@@ -5941,14 +6877,26 @@ app.post("/api/rag/valorar", requireAuth, async (req, res) => {
 
 app.post("/api/rag/ingestar", requireAuth, async (req, res) => {
   try {
-    if (editorialBrainEnabled()) {
-      const result = await callEditorialBrain("/api/rag/ingestar", {
-        method: "POST",
-        body: JSON.stringify(req.body || {}),
-      });
-      return res.json({ ...result, externalBrain: true });
-    }
     const input = await enrichRagInput(cleanRagInput(req.body?.input || req.body));
+    if (editorialBrainEnabled()) {
+      try {
+        const result = await callEditorialBrain("/api/rag/ingestar", {
+          method: "POST",
+          body: JSON.stringify({
+            ...req.body,
+            input,
+            visual_analysis: input.visualAnalysis || null,
+          }),
+        });
+        return res.json({
+          ...result,
+          visual_analysis: input.visualAnalysis || result.visual_analysis || null,
+          externalBrain: true,
+        });
+      } catch (brainError) {
+        if (!n8nUrl && !databaseUrl) throw brainError;
+      }
+    }
     const assessment = cleanRagAssessment(req.body?.assessment || req.body?.valoracion || {});
     const title = String(req.body?.title || assessment.resumen || input.file?.name || input.url || "Documento RAG").trim().slice(0, 180);
     const tags = Array.isArray(req.body?.tags)
@@ -5973,6 +6921,7 @@ app.post("/api/rag/ingestar", requireAuth, async (req, res) => {
         inputType: input.inputType,
         description: input.description,
         urlProfile: input.urlProfile,
+        visualAnalysis: input.visualAnalysis || null,
         aviso: assessment.aviso,
         utilidad_rag: assessment.utilidad_rag,
         sugerencia_chunking: assessment.sugerencia_chunking,
@@ -5980,22 +6929,30 @@ app.post("/api/rag/ingestar", requireAuth, async (req, res) => {
         source: "flow-console-rag-entry",
       },
     };
-    const result = await callN8nWebhook(ragIngestarWebhook, {
-      document,
-      input,
-      assessment,
-      chunking: assessment.sugerencia_chunking,
-      embedding_target: "pgvector",
-      confirmed_at: new Date().toISOString(),
-      source: "flow-console-rag-entry",
-    });
-    const savedDocument = result.document || result;
+    let result = { document };
+    if (n8nUrl) {
+      try {
+        result = await callN8nWebhook(ragIngestarWebhook, {
+          document,
+          input,
+          assessment,
+          visual_analysis: input.visualAnalysis || null,
+          chunking: assessment.sugerencia_chunking,
+          embedding_target: "pgvector",
+          confirmed_at: new Date().toISOString(),
+          source: "flow-console-rag-entry",
+        });
+      } catch {
+        result = { document, localFallback: true };
+      }
+    }
+    const savedDocument = result.document || document;
     const memory = await rememberRagDocument({
       ...document,
       ...savedDocument,
       tags,
     }, assessment);
-    res.json({ ok: true, document: savedDocument, memory: generatorMemoryPayload(memory), raw: result });
+    res.json({ ok: true, document: savedDocument, visual_analysis: input.visualAnalysis || null, memory: generatorMemoryPayload(memory), raw: result });
   } catch (error) {
     res.status(error.status || 502).json({ error: error.message });
   }
@@ -6102,9 +7059,8 @@ app.patch("/api/notices/:id", requireAuth, async (req, res) => {
 });
 
 app.post("/api/workflows/:id/run", requireAuth, async (req, res) => {
-  const pathName = runnableWorkflows[req.params.id];
-  if (!pathName) return res.status(404).json({ error: "Este workflow no admite ejecución desde la consola" });
   try {
+    const pathName = await resolveWorkflowWebhook(req.params.id);
     const context = req.body && typeof req.body === "object" ? req.body : {};
     const subject = String(context.subject || context.title || "").trim();
     const workflowName = String(context.workflowName || req.params.id).trim();
@@ -6218,6 +7174,9 @@ app.get("/api/generator/status", requireAuth, async (_, res) => {
     brainLive: probe.live,
     ready: probe.ready,
     n8n: Boolean(n8nUrl && n8nApiKey),
+    chatgpt: Boolean(openaiApiKey),
+    vision: Boolean(openaiApiKey),
+    imageGeneration: Boolean(openaiApiKey),
     webhook: "/webhook/generador-contenido",
     memory: probe.status?.memory || null,
     error: probe.error,
@@ -6227,8 +7186,9 @@ app.get("/api/generator/status", requireAuth, async (_, res) => {
 app.post("/api/generator", requireAuth, async (req, res) => {
   try {
     const requestedVariants = Math.max(1, Math.min(3, Number(req.body?.variantes || 3)));
-    const { body: enrichedBody } = await enrichGeneratorBody(req.body || {});
-    const channel = req.body?.destino || req.body?.formato || req.body?.targetId || "";
+    const { body: enrichedBody, visualAnalysis } = await enrichGeneratorBody(req.body || {});
+    const channel = req.body?.targetId || req.body?.destino || req.body?.formato || "";
+    const channelInstruction = generatorChannelInstruction(channel, enrichedBody?.formato || req.body?.formato || "");
 
     if (editorialBrainEnabled()) {
       let brain;
@@ -6236,37 +7196,106 @@ app.post("/api/generator", requireAuth, async (req, res) => {
         brain = await generateWithEditorialBrain({
           channel,
           requestedVariants,
-          context: enrichedBody,
+          context: {
+            ...enrichedBody,
+            channel_instruction: channelInstruction,
+          },
         });
       } catch (error) {
-        return res.status(error.status || 502).json({
-          error: `El cerebro editorial no respondió: ${error.message}`,
-          editorial_brain: { configured: true, live: false, applied: false, wroteText: false },
-        });
+        if (!openaiApiKey && !n8nUrl) {
+          return res.status(error.status || 502).json({
+            error: `El cerebro editorial no respondió: ${error.message}`,
+            editorial_brain: { configured: true, live: false, applied: false, wroteText: false },
+            visual_analysis: visualAnalysis,
+          });
+        }
+        brain = { configured: true, source: "editorial-brain", memory: null, instruction: "" };
       }
       const contribution = brainContribution(brain);
-      if (!contribution.usable) {
-        return res.status(502).json({
-          error: "El cerebro editorial no aportó texto ni memoria útil. No se genera fingiendo que ayudó.",
-          editorial_brain: brainClientReport(contribution, { live: true, applied: false }),
-        });
-      }
       if (contribution.wroteText) {
-        const usedMemory = await rememberEditorialBrainUsage(contribution.memory).catch(() => contribution.memory);
+        const usage = await recordEditorialBrainUsage(contribution.memory);
         return res.json({
           ok: true,
           source: "editorial-brain",
           variantes: contribution.variants.slice(0, requestedVariants),
-          rag_memory: usedMemory,
-          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+          rag_memory: usage.memory,
+          visual_analysis: visualAnalysis,
+          editorial_brain: brainClientReport(contribution, {
+            live: true,
+            applied: true,
+            usageRecorded: usage.recorded,
+            usageError: usage.error,
+          }),
         });
       }
-      if (!n8nUrl) {
-        return res.status(503).json({
-          error: "El cerebro orientó con memoria, pero no escribió texto y falta n8n para generar variantes.",
-          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
-        });
+      if (n8nUrl && contribution.usable) {
+        const existingInstructions = String(enrichedBody?.instrucciones || "").trim();
+        const editingMode = generatorEditingMode(enrichedBody);
+        const requestBody = {
+          ...enrichedBody,
+          editing_mode: editingMode,
+          modo_edicion: editingMode,
+          instrucciones: [
+            channelInstruction,
+            generatorIntentInstruction(enrichedBody?.intencion),
+            generatorSourceMaterialInstruction(enrichedBody),
+            existingInstructions,
+            contribution.instruction,
+          ].filter(Boolean).join("\n\n"),
+          source: "flow-console-generator",
+          ...n8nMemoryFields(contribution.memory),
+          editorial_brain: {
+            configured: true,
+            applied: true,
+            source: contribution.source,
+            instruction: contribution.instruction,
+          },
+        };
+        try {
+          const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(150000),
+          });
+          const text = await response.text();
+          let body;
+          try {
+            body = text ? JSON.parse(text) : {};
+          } catch {
+            body = { error: text || "n8n devolvió una respuesta vacía" };
+          }
+          if (response.ok && body?.ok !== false) {
+            const usage = await recordEditorialBrainUsage(contribution.memory);
+            return res.json({
+              ...body,
+              source: "n8n",
+              rag_memory: usage.memory,
+              visual_analysis: visualAnalysis,
+              editorial_brain: brainClientReport(contribution, {
+                live: true,
+                applied: true,
+                sentToN8n: true,
+                usageRecorded: usage.recorded,
+                usageError: usage.error,
+              }),
+            });
+          }
+        } catch {
+          // n8n caído: ChatGPT si hay clave.
+        }
       }
+      return res.json(await generateWithChatGptFallback({
+        enrichedBody,
+        channelInstruction,
+        requestedVariants,
+        visualAnalysis,
+        contribution: contribution.usable ? contribution : null,
+      }));
+    }
+
+    if (n8nUrl) {
+      const localMemory = await localMemoryIfUsable();
       const existingInstructions = String(enrichedBody?.instrucciones || "").trim();
       const editingMode = generatorEditingMode(enrichedBody);
       const requestBody = {
@@ -6274,98 +7303,58 @@ app.post("/api/generator", requireAuth, async (req, res) => {
         editing_mode: editingMode,
         modo_edicion: editingMode,
         instrucciones: [
+          channelInstruction,
           generatorIntentInstruction(enrichedBody?.intencion),
           generatorSourceMaterialInstruction(enrichedBody),
           existingInstructions,
-          contribution.instruction,
+          localMemory ? generatorMemoryInstruction(localMemory) : "",
         ].filter(Boolean).join("\n\n"),
         source: "flow-console-generator",
-        ...n8nMemoryFields(contribution.memory),
-        editorial_brain: {
-          configured: true,
-          applied: true,
-          source: contribution.source,
-          instruction: contribution.instruction,
-        },
+        ...(localMemory ? n8nMemoryFields(localMemory) : {}),
       };
-      const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(150000),
-      });
-      const text = await response.text();
-      let body;
       try {
-        body = text ? JSON.parse(text) : {};
-      } catch {
-        body = { error: text || "n8n devolvió una respuesta vacía" };
-      }
-      if (!response.ok || body?.ok === false) {
-        return res.status(response.status || 502).json({
-          error: body?.error || body?.message || `n8n respondió ${response.status}`,
-          editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
+        const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(150000),
         });
+        const text = await response.text();
+        let body;
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch {
+          body = { error: text || "n8n devolvió una respuesta vacía" };
+        }
+        if (response.ok && body?.ok !== false) {
+          const usage = localMemory
+            ? await recordEditorialBrainUsage(localMemory)
+            : { recorded: false, memory: null, error: null };
+          return res.json({
+            ...body,
+            source: "n8n",
+            rag_memory: usage.memory,
+            visual_analysis: visualAnalysis,
+            editorial_brain: {
+              configured: false,
+              live: false,
+              applied: false,
+              wroteText: false,
+              usageRecorded: Boolean(localMemory) && usage.recorded,
+              usageError: localMemory ? usage.error : null,
+            },
+          });
+        }
+      } catch {
+        // n8n caído: ChatGPT si hay clave.
       }
-      const usedMemory = await rememberEditorialBrainUsage(contribution.memory).catch(() => contribution.memory);
-      return res.json({
-        ...body,
-        source: "n8n",
-        rag_memory: usedMemory,
-        editorial_brain: brainClientReport(contribution, { live: true, applied: true }),
-      });
     }
-
-    if (!n8nUrl) {
-      return res.status(503).json({
-        error: "No hay cerebro editorial ni n8n. No se puede generar texto.",
-        editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
-      });
-    }
-    const localMemory = await localMemoryIfUsable();
-    const existingInstructions = String(enrichedBody?.instrucciones || "").trim();
-    const editingMode = generatorEditingMode(enrichedBody);
-    const requestBody = {
-      ...enrichedBody,
-      editing_mode: editingMode,
-      modo_edicion: editingMode,
-      instrucciones: [
-        generatorIntentInstruction(enrichedBody?.intencion),
-        generatorSourceMaterialInstruction(enrichedBody),
-        existingInstructions,
-        localMemory ? generatorMemoryInstruction(localMemory) : "",
-      ].filter(Boolean).join("\n\n"),
-      source: "flow-console-generator",
-      ...(localMemory ? n8nMemoryFields(localMemory) : {}),
-    };
-    const response = await fetch(`${n8nUrl}/webhook/generador-contenido`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(150000),
-    });
-    const text = await response.text();
-    let body;
-    try {
-      body = text ? JSON.parse(text) : {};
-    } catch {
-      body = { error: text || "n8n devolvió una respuesta vacía" };
-    }
-    if (!response.ok || body?.ok === false) {
-      return res.status(response.status || 502).json({
-        error: body?.error || body?.message || `n8n respondió ${response.status}`,
-        editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
-      });
-    }
-    const usedMemory = localMemory
-      ? await rememberEditorialBrainUsage(localMemory).catch(() => localMemory)
-      : null;
-    res.json({
-      ...body,
-      source: "n8n",
-      rag_memory: usedMemory,
-      editorial_brain: { configured: false, live: false, applied: false, wroteText: false },
-    });
+    return res.json(await generateWithChatGptFallback({
+      enrichedBody,
+      channelInstruction,
+      requestedVariants,
+      visualAnalysis,
+    }));
   } catch (error) {
     const timedOut = error?.name === "TimeoutError";
     res.status(timedOut ? 504 : 502).json({
@@ -6470,11 +7459,23 @@ app.get("/api/stats/ga4", requireAuth, async (req, res) => {
 app.post("/api/claude/last30days", requireAuth, async (req, res) => {
   try {
     const keyword = req.body?.keyword || req.body?.label || req.body?.query || req.body?.palabra;
-    const result = await queryClaudeSearch(keyword);
-    res.json(result);
+    try {
+      const result = await queryClaudeSearch(keyword);
+      return res.json(result);
+    } catch (externalError) {
+      const local = await searchLocalConsole(keyword);
+      res.json({
+        ...local,
+        fallback: true,
+        externalError: externalError.message,
+        text: local.items.length
+          ? `n8n no respondió (${externalError.message}). ${local.text}`
+          : `n8n no respondió (${externalError.message}). ${local.text}`,
+      });
+    }
   } catch (error) {
     res.status(error.status || 502).json({
-      error: `No se pudo consultar la busqueda externa: ${error.message}`,
+      error: `No se pudo consultar: ${error.message}`,
     });
   }
 });
@@ -6563,100 +7564,6 @@ app.delete("/api/stats/campaigns/:id", requireAuth, async (req, res) => {
   }
 });
 
-function googleAdsConfigured() {
-  return Boolean(
-    googleAdsConfig.clientId
-    && googleAdsConfig.clientSecret
-    && googleAdsConfig.developerToken
-    && googleAdsConfig.refreshToken
-    && googleAdsConfig.customerId,
-  );
-}
-
-async function googleAdsAccessToken() {
-  if (!googleAdsConfigured()) throw new Error("Google Ads no está configurado");
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: googleAdsConfig.clientId,
-      client_secret: googleAdsConfig.clientSecret,
-      refresh_token: googleAdsConfig.refreshToken,
-      grant_type: "refresh_token",
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.access_token) {
-    throw new Error(result.error_description || result.error || `Google OAuth respondió ${response.status}`);
-  }
-  return result.access_token;
-}
-
-async function probeGoogleAds() {
-  const checks = [
-    ["clientId", "GOOGLE_ADS_CLIENT_ID o GOOGLE_CLIENT_ID", googleAdsConfig.clientId],
-    ["clientSecret", "GOOGLE_ADS_CLIENT_SECRET o GOOGLE_CLIENT_SECRET", googleAdsConfig.clientSecret],
-    ["developerToken", "GOOGLE_ADS_DEVELOPER_TOKEN", googleAdsConfig.developerToken],
-    ["refreshToken", "GOOGLE_ADS_REFRESH_TOKEN", googleAdsConfig.refreshToken],
-    ["customerId", "GOOGLE_ADS_CUSTOMER_ID", googleAdsConfig.customerId],
-  ].map(([id, label, value]) => ({ id, label, configured: Boolean(value) }));
-  const optional = [{
-    id: "loginCustomerId",
-    label: "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
-    configured: Boolean(googleAdsConfig.loginCustomerId),
-    detail: "Solo necesario si usas MCC/cuenta manager.",
-  }];
-  if (!googleAdsConfigured()) {
-    return { ok: true, configured: false, live: false, checks, optional };
-  }
-  try {
-    const accessToken = await googleAdsAccessToken();
-    const customerId = googleAdsConfig.customerId.replace(/-/g, "");
-    const headers = {
-      Authorization: `Bearer ${accessToken}`,
-      "developer-token": googleAdsConfig.developerToken,
-      "Content-Type": "application/json",
-    };
-    if (googleAdsConfig.loginCustomerId) {
-      headers["login-customer-id"] = googleAdsConfig.loginCustomerId.replace(/-/g, "");
-    }
-    const response = await fetch(`https://googleads.googleapis.com/v18/customers/${customerId}/googleAds:search`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ query: "SELECT customer.id, customer.descriptive_name FROM customer LIMIT 1" }),
-      signal: AbortSignal.timeout(20000),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(body?.error?.message || `Google Ads respondió ${response.status}`);
-    }
-    const account = body?.results?.[0]?.customer?.descriptiveName || "";
-    return {
-      ok: true,
-      configured: true,
-      live: true,
-      customerId,
-      account,
-      checks,
-      optional,
-    };
-  } catch (error) {
-    return {
-      ok: true,
-      configured: true,
-      live: false,
-      error: error.message,
-      checks,
-      optional,
-    };
-  }
-}
-
-app.get("/api/google-ads/status", requireAuth, async (_, res) => {
-  res.json(await probeGoogleAds());
-});
-
 app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) => {
   try {
     const posts = await readPublicationPosts();
@@ -6674,8 +7581,15 @@ app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) =>
     posts[index] = post;
     await writePublicationPosts(posts);
     await rememberPublishedCalendarTask(post).catch(() => {});
-    const memory = await rememberPublicationInTraining(post);
-    res.json({ ok: true, post, posts: posts.slice(0, 50), memory: memory ? generatorMemoryPayload(memory) : null });
+    const training = await rememberPublicationInTraining(post);
+    posts[index] = { ...post, training: publicationTrainingRecord(training) };
+    await writePublicationPosts(posts);
+    res.json({
+      ok: true,
+      post: posts[index],
+      posts: posts.slice(0, 50),
+      ...publicationTrainingResponse(training),
+    });
   } catch (error) {
     res.status(500).json({ error: `No se pudo confirmar la publicación: ${error.message}` });
   }
@@ -6882,6 +7796,18 @@ async function storePublicationMedia(dataUrlValue, req, options = {}) {
   };
 }
 
+async function copyPublicationMediaToLibrary(stored, targetId) {
+  const safeTarget = safeLibraryName(targetId || "instagram");
+  if (!safeTarget || !stored?.fileName || !stored?.id) return null;
+  const source = path.join(publicationMediaDirectory, stored.fileName);
+  const folder = path.join(publicationLibraryDirectory, safeTarget);
+  await fs.mkdir(folder, { recursive: true });
+  const ext = path.extname(stored.fileName) || ".png";
+  const fileName = `${new Date().toISOString().slice(0, 10)}-ia-${stored.id}${ext}`;
+  await fs.copyFile(source, path.join(folder, fileName));
+  return fileName;
+}
+
 app.post("/api/publications/media", requireAuth, handlePublicationMediaUpload);
 app.post("/api/instagram/media", requireAuth, handlePublicationMediaUpload);
 
@@ -7023,8 +7949,24 @@ async function handlePublicationSubmit(req, res) {
     } else if (payload.action === "schedule") {
       await rememberScheduledCalendarTask(post).catch(() => {});
     }
-    const memory = post.publishedAt ? await rememberPublicationInTraining(post) : null;
-    res.json({ ok: true, post, result: flowResult, memory: memory ? generatorMemoryPayload(memory) : null });
+    const training = post.publishedAt
+      ? await rememberPublicationInTraining(post)
+      : { learned: false, source: null, memory: null, error: null };
+    if (post.publishedAt) {
+      post.training = publicationTrainingRecord(training);
+      const stored = await readPublicationPosts();
+      const index = stored.findIndex((item) => item.id === post.id);
+      if (index !== -1) {
+        stored[index] = { ...stored[index], training: post.training };
+        await writePublicationPosts(stored);
+      }
+    }
+    res.json({
+      ok: true,
+      post,
+      result: flowResult,
+      ...publicationTrainingResponse(training),
+    });
   } catch (error) {
     const timedOut = error?.name === "TimeoutError";
     const targetId = String(payload?.target?.id || "");
@@ -7097,8 +8039,11 @@ async function processScheduledPublicationPosts() {
             url: publishing.publicUrl,
           };
         }
-        await rememberPublicationInTraining(publishing);
-        if (publishing.publishedAt) await rememberPublishedCalendarTask(publishing).catch(() => {});
+        if (publishing.publishedAt) {
+          const training = await rememberPublicationInTraining(publishing);
+          publishing.training = publicationTrainingRecord(training);
+          await rememberPublishedCalendarTask(publishing).catch(() => {});
+        }
       } catch (error) {
         Object.assign(publishing, {
           status: "error",

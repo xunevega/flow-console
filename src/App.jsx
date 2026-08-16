@@ -6,7 +6,7 @@ const GENERATOR_OPTIONS = {
   objetivo: ["Vender", "Informar", "Enseñar", "Debatir", "Entretener"],
   tono: ["Directo", "Humor", "Polémico"],
   variantes: [1, 2, 3],
-  materialTipo: ["Texto", "Foto", "Imagen", "PDF", "URL", "Idea"],
+  materialTipo: ["Texto", "Imagen", "PDF", "URL", "Idea"],
 };
 const RAG_TYPES = ["ejemplo_copy", "spec", "nota", "prompt_previo"];
 const RAG_UTILITIES = ["alta", "media", "baja"];
@@ -53,56 +53,6 @@ const CAPTION_COLORS = [
   ["#4a9e7a", "Verde"],
   ["#d6a536", "Amarillo"],
 ];
-const GOOGLE_ADS_SERVICES = {
-  dataimporter: {
-    name: "DataImporter",
-    offer: "Importación y transformación de datos",
-    keywords: ["importar csv", "importar excel", "validar datos", "limpiar datos", "automatizar importaciones", "data transformation"],
-    headlines: ["Importa datos sin dolor", "CSV y Excel bajo control", "Automatiza tus importaciones"],
-    descriptions: ["Detecta, valida y transforma archivos antes de que entren en tu sistema.", "Reduce errores manuales en CSV, Excel y flujos de datos recurrentes."],
-    cpa: 42,
-  },
-  facturae: {
-    name: "Facturae",
-    offer: "Facturación electrónica y cumplimiento",
-    keywords: ["facturae", "factura electrónica", "software facturae", "facturación electrónica españa", "verifactu", "ley crea y crece"],
-    headlines: ["Factura electrónica lista", "Facturae sin líos", "Cumple sin rehacer tu ERP"],
-    descriptions: ["Conecta facturación electrónica con tus procesos reales.", "Automatiza formatos, validación y entrega sin trabajo duplicado."],
-    cpa: 55,
-  },
-  automation: {
-    name: "Automatización",
-    offer: "Automatización operativa con n8n, APIs e IA",
-    keywords: ["automatización procesos", "automatizar tareas", "n8n empresa", "automatización api", "integraciones software", "workflow automation"],
-    headlines: ["Automatiza trabajo repetido", "Menos tareas manuales", "Flujos conectados con APIs"],
-    descriptions: ["Diseñamos automatizaciones que ahorran horas reales cada semana.", "Conecta herramientas, datos y decisiones sin procesos manuales."],
-    cpa: 48,
-  },
-  api: {
-    name: "Conectividad API",
-    offer: "Integraciones API entre herramientas",
-    keywords: ["integración api", "conectar api", "api ecommerce", "api erp", "sincronizar datos", "backend integrations"],
-    headlines: ["APIs conectadas de verdad", "Sincroniza tus sistemas", "Integraciones a medida"],
-    descriptions: ["Conectamos herramientas internas, ERPs, CRMs y servicios externos.", "Menos islas de datos y más procesos conectados."],
-    cpa: 52,
-  },
-  ai: {
-    name: "IA aplicada",
-    offer: "IA aplicada a operaciones reales",
-    keywords: ["ia para empresas", "automatización con ia", "agentes ia", "clasificar documentos ia", "extraer datos ia", "ai workflow"],
-    headlines: ["IA para procesos reales", "Automatiza con IA aplicada", "Datos, documentos e IA"],
-    descriptions: ["Usa IA donde aporta: extracción, clasificación, generación y decisión asistida.", "Integramos IA en procesos medibles, no en demos aisladas."],
-    cpa: 60,
-  },
-};
-const GOOGLE_ADS_OBJECTIVES = {
-  leads: { label: "Leads", bid: "Maximizar conversiones", cta: "Solicitar diagnóstico" },
-  traffic: { label: "Tráfico cualificado", bid: "Maximizar clics", cta: "Ver documentación" },
-  conversions: { label: "Conversiones", bid: "CPA objetivo", cta: "Contactar" },
-  brand: { label: "Marca", bid: "Cuota de impresiones objetivo", cta: "Conocer Æternal Flow" },
-};
-const GOOGLE_ADS_AUDIENCES = ["PYMEs", "Autónomos", "Gestorías", "SaaS B2B", "Ecommerce", "Operaciones", "Equipos técnicos", "Dirección"];
-const GOOGLE_ADS_NEGATIVES = ["gratis", "curso", "empleo", "plantilla", "pdf", "qué es", "definición"];
 
 function toDatetimeLocalValue(value) {
   if (!value) return "";
@@ -629,6 +579,11 @@ function publicationTargetForTask(task, targets) {
   }) || null;
 }
 
+function isInstagramTaskClient(task) {
+  const text = `${task?.title || ""} ${task?.project || ""}`.toLowerCase();
+  return text.includes("instagram");
+}
+
 function firstUrlInText(value) {
   return String(value || "").match(/https?:\/\/\S+/i)?.[0] || "";
 }
@@ -895,13 +850,19 @@ function publicationResultMessage(action, post, targetName) {
 
 function StatusMessage({ value }) {
   const text = String(value || "");
-  const url = text.match(/https?:\/\/\S+/)?.[0] || "";
+  const absolute = text.match(/https?:\/\/\S+/)?.[0] || "";
+  const relative = text.match(/\/oauth\/[\w/-]+/)?.[0] || "";
+  const url = absolute || relative;
   if (!url) return text;
   const before = text.slice(0, text.indexOf(url)).replace(/:\s*$/, "");
+  const after = text.slice(text.indexOf(url) + url.length);
   return (
     <>
-      {before ? <span>{before}</span> : null}
-      <a href={url} target="_blank" rel="noreferrer">Abrir publicación</a>
+      {before ? <span>{before} </span> : null}
+      <a href={url} target={absolute ? "_blank" : undefined} rel={absolute ? "noreferrer" : undefined}>
+        {absolute ? "Abrir enlace" : url}
+      </a>
+      {after ? <span>{after}</span> : null}
     </>
   );
 }
@@ -2415,10 +2376,12 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
   const [savingTask, setSavingTask] = useState(false);
   const [scrollToDay, setScrollToDay] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setInfo("");
     try {
       const [noticeResult, postResult, taskResult, signalResult, targetResult] = await Promise.allSettled([
         api("/notices"),
@@ -2437,6 +2400,12 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
         .map((result) => result.reason?.message)
         .filter(Boolean);
       if (failures.length) setError(failures[0]);
+      const brainSignals = signalResult.status === "fulfilled" ? signalResult.value.editorial_brain : null;
+      if (brainSignals?.configured && brainSignals.error) {
+        setError(`Cerebro configurado pero no aportó señales: ${brainSignals.error}`);
+      } else if (brainSignals?.configured && brainSignals.live && brainSignals.pulled && !brainSignals.received) {
+        setInfo("El cerebro respondió y no hay señales nuevas. El calendario sigue con tareas y publicaciones.");
+      }
     } catch (loadError) {
       setError(loadError.message);
     } finally {
@@ -2768,7 +2737,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
           : editingTask
             ? taskDraft.title
             : `Publicar en ${taskDraft.project || defaultPublicationTarget || "Publicaciones"}`,
-        notes: genericTask ? taskDraft.notes : "",
+        notes: taskDraft.notes,
         repeatWeekdays: [],
       };
       const result = editingTask
@@ -2806,7 +2775,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
         ...taskDraft,
         project: genericTask ? "Tarea" : taskDraft.project,
         title: genericTask ? taskDraft.title.trim() : taskDraft.title || `Publicar en ${taskDraft.project || defaultPublicationTarget || "Publicaciones"}`,
-        notes: genericTask ? taskDraft.notes : "",
+        notes: taskDraft.notes,
         repeatWeekdays: [],
       };
       const result = await api(`/calendar/tasks/${encodeURIComponent(editingTask.id)}/series`, {
@@ -2852,6 +2821,16 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
     }
     const targetId = String(target.id || "").toLowerCase();
     onOpenPublicationTarget?.(targetId || "instagram", task);
+  }
+
+  async function prepareInstagramTask(task) {
+    setError("");
+    try {
+      await api(`/calendar/tasks/${encodeURIComponent(task.id)}/prepare-instagram`, { method: "POST" });
+      await openTaskPublication(task);
+    } catch (prepareError) {
+      setError(prepareError.message);
+    }
   }
 
   async function deleteTask() {
@@ -2943,9 +2922,19 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
 
   async function confirmPublicationPost(postId) {
     setError("");
+    setInfo("");
     try {
-      await api(`/publications/posts/${encodeURIComponent(postId)}/confirm`, { method: "POST" });
+      const result = await api(`/publications/posts/${encodeURIComponent(postId)}/confirm`, { method: "POST" });
       await load();
+      if (result.learned) {
+        setInfo(result.trainingSource === "editorial-brain"
+          ? "Publicación confirmada. El cerebro la recibió para aprender."
+          : "Publicación confirmada. Guardada en la memoria local.");
+      } else if (result.trainingError) {
+        setError(`Publicación confirmada. El cerebro no recibió el aprendizaje: ${result.trainingError}`);
+      } else {
+        setInfo("Publicación confirmada. No hay aprendizaje editorial que enviar.");
+      }
     } catch (confirmError) {
       setError(confirmError.message);
     }
@@ -2978,6 +2967,7 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
           </div>
         </header>
         {error && <div className="notice error">{error}</div>}
+        {info && <div className="notice success">{info}</div>}
 
         <div className="calendar-dashboard-layout">
           <section className="dashboard-month panel">
@@ -3044,6 +3034,9 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
                         )}
                         <footer>
                           {publicationTarget && <button type="button" onClick={() => openTaskPublication(task)}>{manualPublicationLabel(publicationTarget, task)}</button>}
+                          {isInstagramTaskClient(task) && (
+                            <button type="button" onClick={() => prepareInstagramTask(task)}>Dejar listo en Instagram</button>
+                          )}
                           <button type="button" onClick={() => task.status === "done" ? deleteTaskById(task.id) : updateTaskStatus(task, "done")}>{task.status === "done" ? "Borrar" : "Hecho"}</button>
                           <button type="button" onClick={() => setSelectedTaskId(task.id)}>Editar</button>
                         </footer>
@@ -3529,21 +3522,59 @@ function OptionGroup({ options, value, onChange, multi = false }) {
 }
 
 function memoryReady(status) {
-  return Boolean(status?.ready || status?.live);
+  return Boolean(status?.ready || status?.live || status?.chatgpt);
 }
 
 function memoryReadyLabel(status) {
-  if (status?.externalBrain && memoryReady(status)) return "CEREBRO ACTIVO";
-  if (status?.externalBrain) return "CEREBRO NO ACTIVO";
-  if (status?.ready) return "RAG n8n ACTIVO";
-  return "SIN CEREBRO";
+  if (status?.externalBrain && memoryReady(status) && status?.live !== false) return "CEREBRO ACTIVO";
+  if (status?.externalBrain) return status?.chatgpt ? "CEREBRO CAÍDO · CHATGPT" : "CEREBRO NO ACTIVO";
+  if (status?.ready && status?.workflow) return "RAG n8n ACTIVO";
+  if (status?.chatgpt) return "CHATGPT LOCAL";
+  if (status?.ready) return "MEMORIA LOCAL";
+  return "SIN ALMACÉN";
 }
 
 function generatorSourceLabel(source, brain) {
   if (source === "editorial-brain" || brain?.wroteText) return "escrito por el cerebro";
-  if (brain?.applied && source === "n8n") return "vía n8n, con instrucción del cerebro";
+  if (brain?.applied && source === "n8n") return "vía n8n; se le envió instrucción del cerebro";
   if (source === "n8n") return "vía n8n, sin cerebro";
+  if (source === "chatgpt") return brain?.applied ? "ChatGPT, con instrucción del cerebro" : "ChatGPT, sin cerebro";
   return source ? `vía ${source}` : "";
+}
+
+function VisualAnalysisPanel({ analysis, busy = false, title = "Análisis visual" }) {
+  if (busy) {
+    return (
+      <div className="visual-analysis-panel">
+        <strong>{title}</strong>
+        <p>Analizando la imagen...</p>
+      </div>
+    );
+  }
+  if (!analysis) return null;
+  if (analysis.error) {
+    return (
+      <div className="visual-analysis-panel error">
+        <strong>{title}</strong>
+        <p>{analysis.error}</p>
+      </div>
+    );
+  }
+  const lines = [
+    analysis.summary,
+    analysis.subjects?.length ? `Sujetos: ${analysis.subjects.join(", ")}` : "",
+    analysis.palette ? `Paleta: ${analysis.palette}` : "",
+    analysis.visibleText ? `Texto visible: ${analysis.visibleText}` : "",
+    analysis.style ? `Estilo: ${analysis.style}` : "",
+    analysis.warnings?.length ? `Avisos: ${analysis.warnings.join("; ")}` : "",
+  ].filter(Boolean);
+  if (!lines.length) return null;
+  return (
+    <div className="visual-analysis-panel">
+      <strong>{title}</strong>
+      {lines.map((line) => <p key={line.slice(0, 48)}>{line}</p>)}
+    </div>
+  );
 }
 
 function RagEntryConsole({ prefill }) {
@@ -3564,6 +3595,7 @@ function RagEntryConsole({ prefill }) {
   const [message, setMessage] = useState("");
   const [ingestedDocument, setIngestedDocument] = useState(null);
   const [ragStatus, setRagStatus] = useState(null);
+  const [visualAnalysis, setVisualAnalysis] = useState(null);
 
   const loadRagStatus = useCallback(async () => {
     try {
@@ -3598,6 +3630,7 @@ function RagEntryConsole({ prefill }) {
     setAuthorProfileText("");
     setTitle("");
     setIngestedDocument(null);
+    setVisualAnalysis(null);
     setMessage("");
     setError("");
   }
@@ -3651,9 +3684,10 @@ function RagEntryConsole({ prefill }) {
       setPromptHintsText((result.assessment?.promptHints || result.assessment?.prompt_hints || []).join(", "));
       setAuthorProfileText(result.assessment?.authorProfile || result.assessment?.perfil_autor || result.assessment?.perfil || "");
       setTitle(result.assessment?.resumen || file?.name || text.trim() || "Documento RAG");
+      setVisualAnalysis(result.visual_analysis || result.input?.visualAnalysis || null);
       setMessage(result.externalBrain
-        ? "Valoración recibida del cerebro editorial. Revisa antes de confirmar la ingesta."
-        : "Valoración recibida de n8n RAG. Revisa antes de confirmar la ingesta.");
+        ? "Valoración del cerebro. Revisa estilo y temas antes de guardar."
+        : "Valoración de n8n RAG. Revisa estilo y temas antes de guardar.");
     } catch (evaluateError) {
       setError(evaluateError.message);
     } finally {
@@ -3690,8 +3724,8 @@ function RagEntryConsole({ prefill }) {
       });
       setIngestedDocument(result.document);
       setMessage(result.externalBrain
-        ? "Ingesta confirmada en el cerebro editorial."
-        : "Ingesta confirmada en la memoria RAG de n8n.");
+        ? "Guardado en el cerebro como estilo."
+        : "Guardado en la memoria RAG de n8n.");
     } catch (ingestError) {
       setError(ingestError.message);
     } finally {
@@ -3707,7 +3741,7 @@ function RagEntryConsole({ prefill }) {
   }
 
   const canEvaluate = text.trim() || file?.dataUrl;
-  const fileLabel = file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : "Opcional: PDF, TXT, Markdown, CSV o JSON";
+  const fileLabel = file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : "Opcional: imagen JPG/PNG/WebP, PDF, TXT, Markdown, CSV o JSON";
   const urlNotice = !file ? trainingUrlNotice(text) : "";
   const previewTags = splitCommaText(tagsText);
   const previewTopics = splitCommaText(topicsText);
@@ -3726,7 +3760,9 @@ function RagEntryConsole({ prefill }) {
       detail: text.trim()
         ? "Se guarda el texto pegado como contenido base."
         : file?.dataUrl
-          ? `Se envía el archivo ${file.name}; si se puede extraer texto, genera chunks.`
+          ? /^image\//.test(file.type || "") || /\.(jpe?g|png|webp|gif)$/i.test(file.name)
+            ? `Se envía la imagen ${file.name}. ChatGPT la analiza si hay OPENAI_API_KEY; si no, el hueco se ve.`
+            : `Se envía el archivo ${file.name}; si se puede extraer texto, genera chunks.`
           : inputPayload().url
             ? "Se guarda la URL y lo que n8n consiga valorar; si no hay contenido extraído, puede quedar como perfil/referencia."
             : "No hay material principal.",
@@ -3760,7 +3796,9 @@ function RagEntryConsole({ prefill }) {
     {
       label: "Chunks + embeddings",
       status: "yes",
-      detail: `${ragChunkingLabel(assessment.sugerencia_chunking)}; n8n genera embeddings y pgvector los guarda al confirmar.`,
+      detail: ragStatus?.externalBrain
+        ? "Al confirmar, el cerebro guarda este material como estilo."
+        : `${ragChunkingLabel(assessment.sugerencia_chunking)}; n8n genera embeddings y pgvector los guarda al confirmar.`,
     },
     {
       label: "Memoria del generador",
@@ -3783,9 +3821,8 @@ function RagEntryConsole({ prefill }) {
       <section className="rag-shell">
         <header className="rag-header">
           <div>
-            <div className="eyebrow">CEREBRO EDITORIAL</div>
-            <h2>Enviar al cerebro</h2>
-            <p>Valora material nuevo y confirma solo cuando etiquetas, temas y utilidad sean correctos. Esto alimenta la memoria compartida.</p>
+            <h2>Añadir estilo</h2>
+            <p>Valora y guarda estilo. Si el cerebro está vivo, va allí. Si no, ChatGPT o la memoria local. Flow no finge que el cerebro escribió.</p>
           </div>
           <div className="rag-header-right">
             <button type="button" className={`rag-ready ${memoryReady(ragStatus) ? "ready" : "not-ready"}`} onClick={loadRagStatus}>
@@ -3794,7 +3831,7 @@ function RagEntryConsole({ prefill }) {
             <div className="rag-pipeline">
               <span className={assessment ? "done" : "active"}>1 Valoración</span>
               <span className={assessment ? "active" : ""}>2 Revisión</span>
-              <span className={ingestedDocument ? "done" : ""}>3 Cerebro</span>
+              <span className={ingestedDocument ? "done" : ""}>3 Guardar</span>
             </div>
           </div>
         </header>
@@ -3802,8 +3839,8 @@ function RagEntryConsole({ prefill }) {
         {ragStatus && !memoryReady(ragStatus) && (
           <div className="notice error">
             {ragStatus.externalBrain
-              ? `El cerebro editorial no responde. ${ragStatus.error || ""}`
-              : `La memoria RAG no está activa. Revisa el workflow RAG en n8n. ${ragStatus.error || ""}`}
+              ? `El cerebro no responde. ${ragStatus.error || ""} Sin él no se guarda estilo.`
+              : `No hay almacén de estilo activo. ${ragStatus.error || ""}`}
           </div>
         )}
 
@@ -3839,7 +3876,7 @@ function RagEntryConsole({ prefill }) {
                 readFile(event.dataTransfer.files?.[0]);
               }}
             >
-              <input type="file" accept=".pdf,.txt,.md,.json,.csv,text/*,application/pdf" onChange={(event) => readFile(event.target.files?.[0])} />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.pdf,.txt,.md,.json,.csv,text/*,application/pdf" onChange={(event) => readFile(event.target.files?.[0])} />
               <strong>{file ? "Archivo cargado" : "Añadir archivo"}</strong>
               <span>{fileLabel}</span>
             </label>
@@ -3880,7 +3917,9 @@ function RagEntryConsole({ prefill }) {
             </div>
 
             <Button kind="primary" disabled={!canEvaluate || Boolean(busy)}>
-              {busy === "evaluate" ? "VALORANDO EN N8N..." : "VALORAR"}
+              {busy === "evaluate"
+                ? (ragStatus?.externalBrain ? "VALORANDO EN EL CEREBRO..." : "VALORANDO...")
+                : "VALORAR"}
             </Button>
           </form>
 
@@ -3928,6 +3967,7 @@ function RagEntryConsole({ prefill }) {
                   Aviso
                   <textarea value={assessment.aviso || ""} rows={2} onChange={(event) => setAssessment((current) => ({ ...current, aviso: event.target.value || null }))} />
                 </label>
+                <VisualAnalysisPanel analysis={visualAnalysis} title="Análisis visual del archivo" />
                 <label>
                   Etiquetas
                   <input value={tagsText} onChange={(event) => setTagsText(event.target.value)} placeholder="copy, violet moon, ads..." />
@@ -3975,9 +4015,6 @@ function RagEntryConsole({ prefill }) {
                   <Button kind="primary" type="button" onClick={ingest} disabled={busy === "ingest"}>
                     {busy === "ingest" ? "ENVIANDO..." : "CONFIRMAR Y ENVIAR AL CEREBRO"}
                   </Button>
-                  <Button type="button" onClick={() => setMessage("Edita los campos de la ficha y confirma cuando esté correcto.")}>
-                    CORREGIR ETIQUETAS
-                  </Button>
                   <Button kind="danger" type="button" onClick={discard}>DESCARTAR</Button>
                 </div>
               </div>
@@ -3986,18 +4023,18 @@ function RagEntryConsole({ prefill }) {
 
           <section className="panel rag-ingest-panel">
             <div className="panel-heading">
-              <div><span className="section-mark amber" />CEREBRO</div>
-              <span>QUÉ SE GUARDA</span>
+              <div><span className="section-mark amber" />QUÉ SE GUARDA</div>
+              <span>NO HAY ENVÍO HASTA CONFIRMAR</span>
             </div>
             {!assessment ? (
               <div className="rag-save-empty">
                 <strong>Sin decisión todavía.</strong>
-                <span>Valora el material para ver qué se enviará al cerebro, qué no y qué conviene completar antes de confirmar.</span>
+                <span>Valora el material para ver qué estilo se enviará, qué falta y qué conviene completar.</span>
               </div>
             ) : (
               <div className="rag-save-preview">
                 <div className="rag-save-preview-heading">
-                  <strong>Previsualización de envío al cerebro</strong>
+                  <strong>Previsualización de envío</strong>
                   <span>{ragUtilityLabel(assessment.utilidad_rag)} · {ragChunkingLabel(assessment.sugerencia_chunking)}</span>
                 </div>
                 <div className="rag-save-items">
@@ -4039,6 +4076,7 @@ function hasRagMemory(memory) {
     || memory?.topics?.length
     || memory?.textPreferences?.length
     || memory?.styleTags?.length
+    || memory?.promptHints?.length
     || memory?.tagSummary?.length
     || memory?.topicSummary?.length
     || memory?.recentDocuments?.length
@@ -4057,193 +4095,281 @@ function normalizeUiMemoryLabel(value) {
     .trim();
 }
 
-function RagMemoryCard({ memory, mode = "compact", onRefresh, showHeader = true, onDeleteDocument, busy = false }) {
-  const tags = memory?.tags || [];
-  const tagSummary = memory?.tagSummary || [];
-  const topicSummary = memory?.topicSummary || [];
-  const topics = memory?.topics || [];
-  const preferences = memory?.textPreferences || memory?.styleTags || [];
-  const recent = memory?.recentDocuments || [];
-  if (mode === "full") {
-    return (
-      <section className="panel rag-memory-screen">
-        <div className="panel-heading">
-          <div><span className="section-mark green" />MEMORIA EXISTENTE</div>
-          <Button type="button" onClick={onRefresh}>ACTUALIZAR</Button>
-        </div>
-        {!hasRagMemory(memory) ? (
-          <div className="rag-empty">
-            <strong>Sin memoria guardada todavía.</strong>
-            <span>Confirma ingestas para ver pesos por tags, temas y fuentes.</span>
-          </div>
-        ) : (
-          <>
-            <div className="rag-memory-stats">
-              <article><span>Ingestas</span><strong>{memory?.documentCount || recent.length}</strong></article>
-              <article><span>Tags únicos</span><strong>{tags.length}</strong></article>
-              <article><span>Temas</span><strong>{topics.length}</strong></article>
-              <article><span>Actualizada</span><strong>{memory?.updatedAt ? relativeTime(memory.updatedAt) : "nunca"}</strong></article>
-            </div>
-            <div className="rag-topic-groups">
-              {topicSummary.map((category, index) => (
-                <details key={category.id} open={index < 2}>
-                  <summary>
-                    <span>{category.title}</span>
-                    <b>{category.items.length}</b>
-                  </summary>
-                  <p>{category.description}</p>
-                  <div>
-                    {category.items.map((item) => (
-                      <article key={`${category.id}-${item.label}`}>
-                        <span>{item.label}</span>
-                        <b>{item.count} · {item.score}</b>
-                        <i className="score-donut blue" style={{ "--tag-score": `${Math.max(8, item.score)}%` }} aria-label={`Peso ${item.score}`} />
-                      </article>
-                    ))}
-                  </div>
-                </details>
-              ))}
-            </div>
-            {recent.length > 0 && (
-              <div className="rag-recent-docs">
-                <strong>Últimas ingestas</strong>
-                {recent.map((document) => (
-                  <article key={document.id}>
-                    <div>
-                      <span>{document.title}</span>
-                      <b>{document.tags?.slice(0, 5).join(" · ") || document.type}</b>
-                    </div>
-                    {onDeleteDocument && (
-                      <Button type="button" kind="danger" disabled={busy} onClick={() => onDeleteDocument(document.id)}>
-                        BORRAR
-                      </Button>
-                    )}
-                  </article>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </section>
-    );
+function looksLikeStyleNoise(value) {
+  const text = normalizeUiMemoryLabel(value);
+  if (!text) return true;
+  return /^(instagram|linkedin|youtube|pinterest|tiktok|facebook|blog|twitter|x|publish|published|draft|manual|publicaciones|success|done)$/.test(text)
+    || /received by/.test(text)
+    || /^con (imagen|video|url|archivo)/.test(text)
+    || /^con-/.test(text);
+}
+
+function memoryItemLabel(item) {
+  return String(item?.label || item?.tag || "").trim();
+}
+
+function asMemoryItems(values) {
+  return uniqueUiStrings(values).map((label) => ({ label, count: 1, score: 40 }));
+}
+
+function uniqueUiStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    const label = String(value || "").trim();
+    const key = normalizeUiMemoryLabel(label);
+    if (!label || seen.has(key)) continue;
+    seen.add(key);
+    result.push(label);
   }
-  return (
-    <div className="rag-memory-card">
-      {showHeader && (
-        <div className="panel-heading compact">
-          <div><span className="section-mark green" />MEMORIA PARA GENERADOR</div>
-          <span>{memory?.updatedAt ? "ACTUALIZADA" : "SIN DATOS"}</span>
-        </div>
-      )}
-      {tagSummary.length > 0 && (
-        <div className="rag-tag-summary">
-          <strong>Resumen por tags</strong>
-          <div>
-            {tagSummary.slice(0, 10).map((item) => (
-              <article key={item.tag}>
-                <span>{item.tag}</span>
-                <b>{item.count} ingesta{item.count === 1 ? "" : "s"} · {item.score}</b>
-                <i className="score-donut" style={{ "--tag-score": `${Math.max(8, item.score)}%` }} aria-label={`Peso ${item.score}`} />
-              </article>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="rag-memory-body">
-        {[["Tags", tags], ["Temas", topics], ["Texto/estilo", preferences]].map(([label, values]) => (
-          <div key={label}>
-            <strong>{label}</strong>
-            <p>{values.length ? values.slice(0, 8).join(" · ") : "Pendiente de ingesta confirmada."}</p>
-          </div>
-        ))}
-        {recent.length > 0 && (
-          <div>
-            <strong>Último uso</strong>
-            <p>{recent[0].title} · {recent[0].type} · {recent[0].project}</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return result;
+}
+
+function editableStyleCategories(memory) {
+  const fromSummary = Array.isArray(memory?.topicSummary) ? memory.topicSummary.filter((category) => category?.items?.length) : [];
+  if (fromSummary.length) {
+    const known = new Set(fromSummary.map((item) => item.id));
+    const extras = [];
+    if (!known.has("style") && (memory?.textPreferences?.length || memory?.styleTags?.length)) {
+      extras.push({
+        id: "style",
+        title: "Estilo y voz",
+        description: "Cómo debe escribir las entradas.",
+        items: asMemoryItems([...(memory.textPreferences || []), ...(memory.styleTags || [])]),
+      });
+    }
+    if (!known.has("topics") && memory?.topics?.length) {
+      extras.push({ id: "topics", title: "Temas", description: "Conceptos para las entradas.", items: asMemoryItems(memory.topics) });
+    }
+    if (!known.has("influences") && memory?.promptHints?.length) {
+      extras.push({ id: "influences", title: "Pistas", description: "Instrucciones reutilizables.", items: asMemoryItems(memory.promptHints) });
+    }
+    if (!known.has("tags") && memory?.tags?.length) {
+      extras.push({
+        id: "tags",
+        title: "Etiquetas",
+        description: "Rótulos sueltos. Quita ruido operativo.",
+        items: (memory.tagSummary || []).map((item) => ({ label: item.tag, count: item.count, score: item.score }))
+          .concat(asMemoryItems((memory.tags || []).filter((tag) => !(memory.tagSummary || []).some((item) => normalizeUiMemoryLabel(item.tag) === normalizeUiMemoryLabel(tag))))),
+      });
+    }
+    return [...fromSummary, ...extras];
+  }
+  return [
+    { id: "style", title: "Estilo y voz", description: "Cómo debe escribir las entradas.", items: asMemoryItems([...(memory?.textPreferences || []), ...(memory?.styleTags || [])]) },
+    { id: "topics", title: "Temas", description: "Conceptos para las entradas.", items: asMemoryItems(memory?.topics) },
+    { id: "influences", title: "Pistas", description: "Instrucciones reutilizables.", items: asMemoryItems(memory?.promptHints) },
+    { id: "tags", title: "Etiquetas", description: "Rótulos sueltos. Quita ruido operativo.", items: asMemoryItems(memory?.tags) },
+  ].filter((category) => category.items.length);
 }
 
 function RagCorrectConsole() {
   const [memory, setMemory] = useState(null);
   const [ragStatus, setRagStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [rename, setRename] = useState(null);
+  const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const load = useCallback(async () => {
-    setError("");
-    try {
-      const [statusResult, memoryResult] = await Promise.all([
-        api("/rag/status").catch((statusError) => ({ ready: false, error: statusError.message })),
-        api("/rag/memory"),
-      ]);
-      setRagStatus(statusResult);
-      setMemory(memoryResult.memory || memoryResult);
-    } catch (loadError) {
-      setError(loadError.message);
-      setMemory(null);
-    }
+    const [statusResult, memoryResult] = await Promise.all([
+      api("/rag/status").catch((statusError) => ({ ready: false, error: statusError.message })),
+      api("/rag/memory?view=correct"),
+    ]);
+    setRagStatus(statusResult);
+    setMemory(memoryResult.memory || memoryResult);
   }, []);
 
   useEffect(() => {
-    load();
+    load().catch((loadError) => {
+      setError(loadError.message);
+      setMemory(null);
+    });
   }, [load]);
 
-  async function deleteDocument(documentId) {
-    if (!documentId || !window.confirm("¿Retirar esta ingesta de la memoria editorial?")) return;
-    setBusy(true);
+  async function runClean(body, successMessage) {
+    const key = `${body.action}:${body.value || body.tag || body.documentId || ""}`;
+    setBusyAction(key);
     setError("");
     setMessage("");
     try {
-      const result = await api("/rag/memory/clean", {
+      await api("/rag/memory/clean", {
         method: "POST",
-        body: JSON.stringify({ action: "delete-document", documentId }),
+        body: JSON.stringify(body),
       });
-      setMemory(result.memory || result);
-      setMessage("Ingesta retirada de la memoria.");
-    } catch (deleteError) {
-      setError(deleteError.message);
+      await load();
+      setMessage(successMessage);
+      setRename(null);
+    } catch (cleanError) {
+      setError(cleanError.message);
     } finally {
-      setBusy(false);
+      setBusyAction("");
     }
   }
+
+  async function deleteDocument(documentId) {
+    if (!documentId || !window.confirm("¿Retirar esta ingesta del almacén de estilo?")) return;
+    await runClean({ action: "delete-document", documentId }, "Ingesta retirada.");
+  }
+
+  const needle = normalizeUiMemoryLabel(query);
+  const categories = editableStyleCategories(memory).map((category) => ({
+    ...category,
+    items: (category.items || [])
+      .map((item) => ({ ...item, label: memoryItemLabel(item) }))
+      .filter((item) => item.label && (!needle || normalizeUiMemoryLabel(item.label).includes(needle))),
+  })).filter((category) => category.items.length || !needle);
+  const documents = (memory?.recentDocuments || []).filter((document) => {
+    if (!needle) return true;
+    const haystack = normalizeUiMemoryLabel(`${document.title || ""} ${(document.tags || []).join(" ")} ${document.type || ""}`);
+    return haystack.includes(needle);
+  });
+  const busy = Boolean(busyAction);
 
   return (
     <main className="rag-workspace">
       <section className="rag-shell">
         <header className="rag-header">
           <div>
-            <div className="eyebrow">CEREBRO EDITORIAL</div>
-            <h2>Corregir memoria</h2>
-            <p>Revisa lo que ya está en el cerebro y borra ingestas que no deban pesar. No inventa memoria: lee `/api/rag/memory`.</p>
+            <h2>Corregir estilo</h2>
+            <p>
+              El cerebro es el almacén de estilo. Aquí subes, bajas, quitas o renombras lo que ya aprendió,
+              para que genere mejores entradas. Flow no es el cerebro: solo lo corrige.
+            </p>
           </div>
-          <button type="button" className={`rag-ready ${memoryReady(ragStatus) ? "ready" : "not-ready"}`} onClick={load}>
+          <button type="button" className={`rag-ready ${memoryReady(ragStatus) ? "ready" : "not-ready"}`} onClick={() => {
+            setError("");
+            load().catch((loadError) => {
+              setError(loadError.message);
+              setMemory(null);
+            });
+          }}>
             {memoryReadyLabel(ragStatus)}
           </button>
         </header>
         {ragStatus && !memoryReady(ragStatus) && (
           <div className="notice error">
             {ragStatus.externalBrain
-              ? `El cerebro editorial no responde. ${ragStatus.error || ""}`
-              : `La memoria RAG no está activa. Revisa el workflow RAG en n8n. ${ragStatus.error || ""}`}
+              ? `El cerebro no responde. ${ragStatus.error || ""} Sin él no se corrige el estilo.`
+              : `No hay almacén de estilo activo. ${ragStatus.error || ""}`}
           </div>
         )}
-        {(message || error) && (
-          <div className={`instagram-status ${error ? "error" : "success"}`}>
-            <StatusMessage value={error || message} />
+        {message && <div className="instagram-status success"><StatusMessage value={message} /></div>}
+        {error && <div className="instagram-status error"><StatusMessage value={error} /></div>}
+
+        <section className="panel rag-memory-screen">
+          <div className="panel-heading">
+            <div><span className="section-mark green" />ESTILO GUARDADO</div>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar ruido, tema o estilo"
+              aria-label="Buscar en el estilo guardado"
+            />
           </div>
-        )}
-        <RagMemoryCard
-          memory={memory}
-          mode="full"
-          onRefresh={load}
-          onDeleteDocument={deleteDocument}
-          busy={busy}
-        />
+          {!hasRagMemory(memory) ? (
+            <div className="rag-empty">
+              <strong>Sin estilo guardado todavía.</strong>
+              <span>Añade material y confirma. Lo publicado y las ediciones del generador también alimentan el cerebro si está vivo.</span>
+            </div>
+          ) : (
+            <>
+              <div className="rag-memory-stats">
+                <article><span>Ingestas</span><strong>{memory?.documentCount || documents.length}</strong></article>
+                <article><span>Estilo</span><strong>{(memory?.textPreferences || []).length + (memory?.styleTags || []).length}</strong></article>
+                <article><span>Temas</span><strong>{(memory?.topics || []).length}</strong></article>
+                <article><span>Actualizada</span><strong>{memory?.updatedAt ? relativeTime(memory.updatedAt) : "nunca"}</strong></article>
+              </div>
+              <div className="rag-topic-groups rag-correct-groups">
+                {categories.map((category, index) => (
+                  <details key={category.id} open={index < 3 || Boolean(needle)}>
+                    <summary>
+                      <span>{category.title}</span>
+                      <b>{category.items.length}</b>
+                    </summary>
+                    <p>{category.description}</p>
+                    <div>
+                      {category.items.map((item) => {
+                        const value = item.label;
+                        const actionKey = (action) => `${action}:${value}`;
+                        const renaming = rename?.category === category.id && rename?.value === value;
+                        return (
+                          <article key={`${category.id}-${value}`} className={looksLikeStyleNoise(value) ? "noise" : ""}>
+                            <span title={value}>{value}</span>
+                            <b>{item.count} · {item.score}</b>
+                            <i className="score-donut blue" style={{ "--tag-score": `${Math.max(8, item.score)}%` }} aria-label={`Peso ${item.score}`} />
+                            <div className="rag-item-actions">
+                              <button type="button" disabled={busy} onClick={() => runClean({ action: "raise-item", category: category.id, value }, `Subido: ${value}.`)}>
+                                {busyAction === actionKey("raise-item") ? "..." : "Subir"}
+                              </button>
+                              <button type="button" disabled={busy} onClick={() => runClean({ action: "lower-item", category: category.id, value }, `Bajado: ${value}.`)}>
+                                {busyAction === actionKey("lower-item") ? "..." : "Bajar"}
+                              </button>
+                              <button type="button" disabled={busy} onClick={() => setRename({ category: category.id, value, next: value })}>
+                                Renombrar
+                              </button>
+                              <button
+                                type="button"
+                                className="danger"
+                                disabled={busy}
+                                onClick={() => {
+                                  if (!window.confirm(`¿Quitar “${value}” del estilo?`)) return;
+                                  runClean({ action: "remove-item", category: category.id, value }, `Quitado: ${value}.`);
+                                }}
+                              >
+                                {busyAction === actionKey("remove-item") ? "..." : "Quitar"}
+                              </button>
+                            </div>
+                            {renaming && (
+                              <form
+                                className="rag-rename-row"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const next = String(rename.next || "").trim();
+                                  if (!next || next === value) return;
+                                  runClean(
+                                    { action: "rename-item", category: category.id, value, replacement: next },
+                                    `Renombrado: ${value} → ${next}.`,
+                                  );
+                                }}
+                              >
+                                <input
+                                  value={rename.next}
+                                  onChange={(event) => setRename((current) => ({ ...current, next: event.target.value }))}
+                                  autoFocus
+                                />
+                                <button type="submit" disabled={busy || !String(rename.next || "").trim()}>Guardar</button>
+                                <button type="button" onClick={() => setRename(null)}>Cancelar</button>
+                              </form>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ))}
+              </div>
+              {documents.length > 0 && (
+                <div className="rag-recent-docs">
+                  <strong>Ingestas</strong>
+                  {documents.map((document) => (
+                    <article key={document.id}>
+                      <div>
+                        <span>{document.title}</span>
+                        <b>{document.tags?.slice(0, 5).join(" · ") || document.type}</b>
+                      </div>
+                      <Button type="button" kind="danger" disabled={busy} onClick={() => deleteDocument(document.id)}>
+                        BORRAR
+                      </Button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </section>
     </main>
   );
@@ -4253,18 +4379,18 @@ function LearningFlow({ active = "add" }) {
   const steps = [
     {
       id: "add",
-      title: "Enviar al cerebro",
-      detail: "Mandar material nuevo al cerebro editorial compartido: texto, URL, archivo, nota o referencia.",
+      title: "Material",
+      detail: "Texto, URL, archivo o referencia que el cerebro debe aprender como estilo.",
     },
     {
       id: "review",
-      title: "Valorar",
-      detail: "Revisar qué es, qué aporta y qué etiquetas se guardan.",
+      title: "Revisar",
+      detail: "Temas, voz y utilidad. Si está mal etiquetado, no lo confirmes.",
     },
     {
       id: "generate",
-      title: "Generar",
-      detail: "El generador usa el cerebro si está vivo y aporta; si no hay cerebro, n8n, y se dice cuál fue.",
+      title: "Usar",
+      detail: "El generador pide ese estilo al cerebro para escribir entradas.",
     },
   ];
   return (
@@ -4605,11 +4731,24 @@ function broadHashtagsFromText(text) {
   return tags;
 }
 
-function hashtagsFromGeneratedResults(results = [], form = {}) {
+function hashtagsFromMemory(memory) {
+  if (!memory) return [];
+  const labels = [
+    ...(memory.styleTags || []),
+    ...(memory.tags || []),
+    ...(memory.topics || []),
+  ];
+  return [...new Set(labels
+    .map((item) => hashtagToken(item))
+    .filter((tag) => tag.length > 2 && tag.length <= 32 && !internalHashtagNoise.has(normalizeUiMemoryLabel(tag.replace(/^#/, "")))))]
+    .slice(0, 8);
+}
+
+function hashtagsFromGeneratedResults(results = [], form = {}, memory = null) {
   const resultText = results.join("\n");
   const materialText = [form.material, form.instrucciones].filter(Boolean).join("\n");
   const hasUserMaterial = compactText(materialText).length >= 12;
-  if (!hasUserMaterial && !compactText(resultText)) return [];
+  if (!hasUserMaterial && !compactText(resultText) && !memory) return [];
   const primaryText = [resultText, materialText].filter(Boolean).join("\n");
   const contextText = [
     form.formato,
@@ -4635,6 +4774,8 @@ function hashtagsFromGeneratedResults(results = [], form = {}) {
     .map(([word]) => word);
   const generated = [...existing, ...primaryPhrases, ...frequent.map(hashtagToken), ...contextPhrases]
     .filter(Boolean);
+  const memoryTags = hashtagsFromMemory(memory);
+  if (memoryTags.length) return [...new Set([...memoryTags, ...generated])].slice(0, 10);
   return [...new Set(generated)].slice(0, 10);
 }
 
@@ -4766,6 +4907,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
   const [generatorStatus, setGeneratorStatus] = useState(null);
   const [resultSource, setResultSource] = useState("");
   const [brainReport, setBrainReport] = useState(null);
+  const [visualAnalysis, setVisualAnalysis] = useState(null);
 
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -4785,7 +4927,6 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
 
   async function setGeneratorFile(file) {
     if (!file) return;
-    const visualMaterial = ["Imagen", "Foto"].includes(form.materialTipo);
     const allowed = form.materialTipo === "PDF"
       ? ["application/pdf"]
       : ["image/jpeg", "image/png", "image/webp"];
@@ -4793,7 +4934,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
       ? /\.pdf$/i.test(file.name)
       : /\.(jpe?g|png|webp)$/i.test(file.name);
     if (!allowed.includes(file.type) && !validExtension) {
-      setError(form.materialTipo === "PDF" ? "Selecciona un PDF" : "Selecciona una foto o imagen JPG, PNG o WebP");
+      setError(form.materialTipo === "PDF" ? "Selecciona un PDF" : "Selecciona una imagen JPG, PNG o WebP");
       return;
     }
     try {
@@ -4812,7 +4953,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
         `Formato: ${file.type || "desconocido"} · Tamaño: ${size}`,
         form.materialTipo === "PDF"
           ? "El servidor extraerá texto real del PDF y lo añadirá al material antes de generar."
-          : `${visualMaterial ? "La foto/imagen" : "La imagen"} se envía adjunta para análisis visual real antes de escribir el texto.`,
+          : "La imagen se envía adjunta para análisis visual real antes de escribir el texto.",
         form.material.trim() ? `\nNotas:\n${form.material.trim()}` : "",
       ].filter(Boolean).join("\n"));
     } catch (readError) {
@@ -4852,6 +4993,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
     setGenerationMemory(null);
     setResultSource("");
     setBrainReport(null);
+    setVisualAnalysis(null);
     try {
       const response = await api("/generator", {
         method: "POST",
@@ -4868,6 +5010,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
       setResults(normalizeGeneratedVariants(response.variantes).map((text) => ({ original: text, edited: text })));
       setResultSource(String(response.source || ""));
       setBrainReport(response.editorial_brain || null);
+      setVisualAnalysis(response.visual_analysis || null);
       if (response.rag_memory) setRagMemory(response.rag_memory);
       if (response.rag_memory) setGenerationMemory(response.rag_memory);
     } catch (generationError) {
@@ -4945,25 +5088,29 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
     }
   }
 
-  const fileMaterial = ["Imagen", "Foto", "PDF"].includes(form.materialTipo);
+  const fileMaterial = ["Imagen", "PDF"].includes(form.materialTipo);
   const hasMaterial = fileMaterial ? Boolean(materialFilePayload) : Boolean(form.material.trim() || String(seedText || "").trim());
   const generatorDisabled = busy || !hasMaterial;
   const GeneratorWrapper = embedded ? "div" : "main";
-  const generatedHashtags = hashtagsFromGeneratedResults(results.map(editableResultValue), form);
+  const generatedHashtags = hashtagsFromGeneratedResults(results.map(editableResultValue), form, generationMemory || ragMemory);
 
   return (
     <GeneratorWrapper className={`generator-workspace ${embedded ? "embedded-generator" : ""}`}>
       <section className="generator-shell">
         <header className="generator-header">
           <div>
-            <div className="eyebrow">CEREBRO EDITORIAL</div>
-            <h2>Texto para esta publicación</h2>
+            <h2>{targetFormat ? `Texto para ${targetFormat}` : "Texto para esta publicación"}</h2>
             <p>
+              {targetFormat ? `Sale listo para ${targetFormat}. ` : ""}
               {generatorStatus?.brain
-                ? "El cerebro tiene que escribir o orientar de verdad. Si no aporta texto ni memoria, no se genera."
+                ? "El cerebro escribe o orienta con el estilo guardado. Si no aporta texto, se usa n8n o ChatGPT y se dice."
                 : generatorStatus?.configured
-                  ? "Editorial Brain está configurado pero no responde. No se finge generación con cerebro."
-                  : "Sin cerebro. Si hay n8n, genera por n8n y se dice."}
+                  ? "El cerebro está configurado pero no responde. Se genera con n8n o ChatGPT, no como si el cerebro hubiera escrito."
+                  : generatorStatus?.n8n
+                    ? "Sin cerebro. Genera con n8n y se dice."
+                    : generatorStatus?.chatgpt
+                      ? "Sin cerebro ni n8n. ChatGPT escribe el texto y se etiqueta como ChatGPT."
+                      : "Falta cerebro, n8n y OPENAI_API_KEY. No hay de dónde sacar texto."}
             </p>
           </div>
           <button
@@ -4971,7 +5118,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
             className={`rag-ready ${generatorStatus?.brain ? "ready" : "not-ready"}`}
             onClick={() => api("/generator/status").then(setGeneratorStatus).catch(() => {})}
           >
-            {generatorStatus?.brain ? "CEREBRO ACTIVO" : generatorStatus?.configured ? "CEREBRO NO RESPONDE" : "SIN CEREBRO"}
+            {generatorStatus?.brain ? "CEREBRO ACTIVO" : generatorStatus?.configured ? "CEREBRO NO RESPONDE" : generatorStatus?.chatgpt ? "CHATGPT LOCAL" : generatorStatus?.n8n ? "N8N" : "SIN GENERADOR"}
           </button>
           {embedded && onBack && (
             <Button type="button" onClick={onBack}>← PUBLICACIONES</Button>
@@ -4979,7 +5126,7 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
         </header>
         {generatorStatus?.configured && !generatorStatus?.brain && (
           <div className="notice error">
-            Editorial Brain está configurado pero no responde. {generatorStatus.error || ""} No se finge texto con cerebro.
+            El cerebro está configurado pero no responde. {generatorStatus.error || ""} Se genera con n8n o ChatGPT, no como cerebro.
           </div>
         )}
 
@@ -4996,9 +5143,9 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
                 set("materialTipo", value);
                 setMaterialFile(null);
                 setMaterialFilePayload(null);
-                if (["Imagen", "Foto", "PDF"].includes(value)) set("material", "");
+                if (["Imagen", "PDF"].includes(value)) set("material", "");
               }} />
-              {["Imagen", "Foto", "PDF"].includes(form.materialTipo) && (
+              {["Imagen", "PDF"].includes(form.materialTipo) && (
                 <label
                   className={`generator-file-dropzone ${materialFile ? "loaded" : ""}`}
                   onDragOver={(event) => event.preventDefault()}
@@ -5010,12 +5157,12 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
                     onChange={selectGeneratorFile}
                   />
                   <span className="generator-file-icon">{form.materialTipo === "PDF" ? "PDF" : "IMG"}</span>
-                  <strong>{materialFile ? materialFile.name : `Arrastra ${form.materialTipo === "PDF" ? "un PDF" : form.materialTipo === "Foto" ? "una foto" : "una imagen"} aquí`}</strong>
+                  <strong>{materialFile ? materialFile.name : `Arrastra ${form.materialTipo === "PDF" ? "un PDF" : "una imagen"} aquí`}</strong>
                   <em>{form.materialTipo === "PDF" ? "PDF" : "JPG, PNG o WebP"}</em>
                   <b>{materialFile ? "Cambiar archivo" : "Seleccionar del ordenador"}</b>
                 </label>
               )}
-              {!["Imagen", "Foto", "PDF"].includes(form.materialTipo) && (
+              {!["Imagen", "PDF"].includes(form.materialTipo) && (
                 <>
                   <textarea
                     value={form.material}
@@ -5055,16 +5202,17 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
               {resultSource ? <small>{generatorSourceLabel(resultSource, brainReport)}</small> : null}
             </div>
             <div className="generated-hashtags-panel">
-              <label>Hashtags generados</label>
+              <label>{(generationMemory || ragMemory) ? "Hashtags del estilo y del texto" : "Hashtags generados"}</label>
               <div>
-                {generatedHashtags.length ? generatedHashtags.join(" ") : "Se generarán aquí junto al texto."}
+                {generatedHashtags.length ? generatedHashtags.join(" ") : "Se generan del estilo guardado y del texto."}
               </div>
             </div>
+            <VisualAnalysisPanel analysis={visualAnalysis} title="Análisis visual del material" />
             {error && <div className="notice error">{error}</div>}
             {message && <div className="notice success">{message}</div>}
             {busy && (
               <div className="generator-empty">
-                {generatorStatus?.brain ? "El cerebro editorial está trabajando." : "n8n está generando el texto. El cerebro no participa."}
+                {generatorStatus?.brain ? "El cerebro editorial está trabajando." : generatorStatus?.n8n ? "n8n está generando el texto. El cerebro no participa." : "ChatGPT está generando el texto."}
               </div>
             )}
             {!busy && !error && !results.length && (
@@ -5072,12 +5220,14 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
                 <strong>Sin variantes todavía.</strong>
                 <span>
                   {generatorStatus?.brain
-                    ? "Pega material o usa el texto del editor. El cerebro tiene que aportar texto o memoria; si no, verás el error."
+                    ? "Pega material o usa el texto del editor. Si el cerebro no escribe, n8n o ChatGPT lo harán y se verá la fuente."
                     : generatorStatus?.configured
-                      ? "El cerebro no responde. No se genera como si estuviera activo."
+                      ? "El cerebro no responde. Se genera con n8n o ChatGPT si están."
                       : generatorStatus?.n8n
                         ? "Sin cerebro. Genera con n8n y se etiquetará como n8n."
-                        : "Falta cerebro y n8n. No hay de dónde sacar texto."}
+                        : generatorStatus?.chatgpt
+                          ? "ChatGPT escribirá el texto. No es el cerebro."
+                          : "Falta cerebro, n8n y ChatGPT. No hay de dónde sacar texto."}
                 </span>
               </div>
             )}
@@ -5136,7 +5286,7 @@ function GeneratorWhy({ memory, brain }) {
   const styleTags = memory?.styleTags || [];
   const promptHints = memory?.promptHints || [];
   const recent = memory?.recentDocuments || [];
-  const used = [
+    const used = [
     tags.length ? { label: "Tags disponibles", value: tags.slice(0, 8).join(" · ") } : null,
     topics.length ? { label: "Temas disponibles", value: topics.slice(0, 6).join(" · ") } : null,
     styleTags.length ? { label: "Estilo disponible", value: styleTags.slice(0, 6).join(" · ") } : null,
@@ -5146,10 +5296,17 @@ function GeneratorWhy({ memory, brain }) {
     brain?.applied && !brain?.wroteText ? {
       label: "Cerebro",
       value: brain.documentCount
-        ? `Orientó n8n con memoria (${brain.documentCount} ingestas).`
-        : "Orientó n8n con instrucción. No escribió el texto.",
+        ? `Se envió memoria a n8n (${brain.documentCount} ingestas). No se afirma que n8n la usara.`
+        : "Se envió instrucción a n8n. No se afirma que n8n la usara.",
     } : null,
     brain && !brain.applied ? { label: "Cerebro", value: "No participó en esta generación." } : null,
+    brain?.usageRecorded === true ? { label: "Uso", value: "El cerebro registró que se usó esta memoria." } : null,
+    brain?.usageRecorded === false && brain?.applied ? {
+      label: "Uso",
+      value: brain.usageError
+        ? `No se registró el uso en el cerebro: ${brain.usageError}`
+        : "No se registró el uso en el cerebro.",
+    } : null,
   ].filter(Boolean);
 	return (
 	  <details className="generator-why">
@@ -5172,7 +5329,7 @@ function GeneratorWhy({ memory, brain }) {
             {brain?.wroteText
               ? "El texto lo escribió el cerebro editorial."
               : brain?.applied
-                ? "n8n escribió el texto usando la instrucción o memoria del cerebro. No afirma que cada etiqueta haya influido."
+                ? "n8n escribió el texto. Se le envió instrucción o memoria del cerebro; no se puede afirmar que n8n la usara."
                 : "n8n escribió el texto. El cerebro no participó."}
           </p>
 	    </article>
@@ -5241,6 +5398,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const [mediaPosition, setMediaPosition] = useState({ x: 0, y: 0 });
   const [mediaDrag, setMediaDrag] = useState(null);
   const [preflight, setPreflight] = useState(null);
+  const [visualAnalysis, setVisualAnalysis] = useState(null);
+  const [visualBusy, setVisualBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const mediaInputRef = useRef(null);
   const selectedTarget = useMemo(
     () => targets.find((target) => target.id === selectedTargetId)
@@ -5281,6 +5441,38 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   useEffect(() => {
     setMediaLoadFailed(false);
   }, [imageUrl]);
+
+  useEffect(() => {
+    const video = ["youtube", "tiktok"].includes(selectedTarget.id);
+    if (publisherScreen !== "editor" || !imageUrl || video) {
+      setVisualAnalysis(null);
+      setVisualBusy(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setVisualBusy(true);
+    api("/publications/vision", {
+      method: "POST",
+      body: JSON.stringify({
+        imageUrl,
+        caption,
+        targetId: selectedTarget.id,
+        aspect: mediaAspect,
+      }),
+    })
+      .then((result) => {
+        if (!controller.signal.aborted) setVisualAnalysis(result.analysis || null);
+      })
+      .catch((visionError) => {
+        if (!controller.signal.aborted) {
+          setVisualAnalysis({ error: visionError.message, configured: true, live: false });
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setVisualBusy(false);
+      });
+    return () => controller.abort();
+  }, [publisherScreen, imageUrl, selectedTarget.id, mediaAspect]);
 
   useEffect(() => {
     Promise.all([api("/publications/posts"), api("/publication-targets"), api("/publications/channels/status")])
@@ -5431,6 +5623,40 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     }
   }
 
+  async function generatePublicationImage() {
+    if (!caption.trim()) {
+      setError("Escribe el texto de la pieza para pedir el brief visual.");
+      return;
+    }
+    setImageBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api("/publications/generate-image", {
+        method: "POST",
+        body: JSON.stringify({
+          caption,
+          targetId: selectedTarget.id,
+          aspect: mediaAspect,
+          analysis: visualAnalysis && !visualAnalysis.error ? visualAnalysis : null,
+        }),
+      });
+      setImageUrl(result.url);
+      setMediaSource(null);
+      setMediaLoadFailed(false);
+      if (Array.isArray(result.items)) setLibraryItems(result.items);
+      const briefNote = result.brief?.applied
+        ? (result.brief.source === "editorial-brain" ? "Brief del cerebro." : "Brief del estilo guardado.")
+        : "";
+      const sourceNote = result.model ? `ChatGPT (${result.model}).` : "ChatGPT.";
+      setMessage(["Imagen generada y guardada en la biblioteca.", sourceNote, briefNote].filter(Boolean).join(" "));
+    } catch (generateError) {
+      setError(generateError.message);
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
   async function uploadMedia(event) {
     await uploadMediaFile(event.target.files?.[0]);
     event.target.value = "";
@@ -5476,9 +5702,21 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
 
   function publicationMediaActions({ failed = false } = {}) {
     return (
-      <label className="publication-upload-action" htmlFor="publication-media-input">
-        {mediaBusy ? "Subiendo..." : failed ? "Subir desde ordenador" : "Seleccionar del ordenador"}
-      </label>
+      <div className="publication-media-action-row">
+        <label className="publication-upload-action" htmlFor="publication-media-input">
+          {mediaBusy ? "Subiendo..." : failed ? "Subir desde ordenador" : "Seleccionar del ordenador"}
+        </label>
+        {!isVideoTarget && (
+          <button
+            type="button"
+            className="publication-generate-image"
+            disabled={imageBusy || mediaBusy || !caption.trim()}
+            onClick={generatePublicationImage}
+          >
+            {imageBusy ? "GENERANDO IMAGEN..." : "GENERAR IMAGEN"}
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -5589,11 +5827,21 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
       });
 	      setPosts((current) => [result.post, ...current.filter((post) => post.id !== result.post.id)].slice(0, 50));
 	      onPublicationSaved?.();
-	      const learnedSignals = result.memory ? publicationLearningSignals(result.post) : [];
+	      const learned = Boolean(result.learned);
+	      const learnedSignals = learned ? publicationLearningSignals(result.post) : [];
+	      const n8nBrain = result.result?.editorial_brain || result.post?.result?.editorial_brain;
 	      setMessage([
 	        publicationResultMessage(action, result.post, selectedTarget.name),
-	        learnedSignals.length ? `Aprendido: ${learnedSignals.join(" ")}` : "",
+	        learned
+            ? (learnedSignals.length ? `Aprendido: ${learnedSignals.join(" ")}` : "Aprendido.")
+            : "",
+          n8nBrain?.sentToN8n ? "Memoria del cerebro enviada a n8n. No se afirma que n8n la usara." : "",
 	      ].filter(Boolean).join(" "));
+        if (action === "publish" && result.post?.publishedAt && !learned && !result.result?.duplicateSkipped) {
+          setError(result.trainingError
+            ? `El cerebro no recibió esta publicación: ${result.trainingError}`
+            : "Esta publicación no se envió a aprendizaje editorial.");
+        }
 	    } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -5609,7 +5857,16 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
       const result = await api(`/publications/posts/${encodeURIComponent(postId)}/confirm`, { method: "POST" });
       setPosts((current) => current.map((post) => post.id === postId ? result.post : post));
       onPublicationSaved?.();
-      setMessage("Publicación confirmada.");
+      if (result.learned) {
+        setMessage(result.trainingSource === "editorial-brain"
+          ? "Publicación confirmada. El cerebro la recibió para aprender."
+          : "Publicación confirmada. Guardada en la memoria local.");
+      } else {
+        setMessage("Publicación confirmada.");
+        setError(result.trainingError
+          ? `El cerebro no recibió el aprendizaje: ${result.trainingError}`
+          : "No hay aprendizaje editorial que enviar.");
+      }
     } catch (confirmError) {
       setError(confirmError.message);
     } finally {
@@ -5939,6 +6196,13 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                 <div className="publication-media-actions">
                   {publicationMediaActions({ failed: mediaLoadFailed })}
                 </div>
+                {!isVideoTarget && (
+                  <VisualAnalysisPanel
+                    analysis={visualAnalysis}
+                    busy={visualBusy}
+                    title="Análisis visual"
+                  />
+                )}
                 <div className="publication-library">
                   <strong>Biblioteca</strong>
                   {libraryItems.length ? (
@@ -6106,7 +6370,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
               </section>
 
               <section className="instagram-controls">
-                {(message || error) && <div className={`instagram-status ${error ? "error" : "success"}`}><StatusMessage value={error || message} /></div>}
+                {message && <div className="instagram-status success"><StatusMessage value={message} /></div>}
+                {error && <div className="instagram-status error"><StatusMessage value={error} /></div>}
 
                 {preflight?.checks?.length ? (
                   <div className={`panel publication-preflight ${preflight.level || "ok"}`}>
@@ -6185,6 +6450,11 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                         </div>
                       </header>
                       {post.caption ? <p className="draft-snippet">{post.caption}</p> : null}
+                      {post.training?.learned ? (
+                        <p className="draft-snippet">Aprendida en {post.training.source === "editorial-brain" ? "el cerebro editorial" : "la memoria local"}.</p>
+                      ) : post.training?.error ? (
+                        <p className="draft-snippet">No se aprendió: {post.training.error}</p>
+                      ) : null}
                     </article>
                   )) : (
                     <p>Aún no hay entregas registradas.</p>
@@ -6376,7 +6646,7 @@ function Last30DaysLookupPanel({ className = "", onQueueResult }) {
         <span className="section-mark blue" />
         <div>
           <strong>Búsqueda para label</strong>
-          <small>n8n pregunta a Claude con la palabra indicada</small>
+          <small>n8n si responde; si no, publicaciones, notas, calendario y estilo de esta consola</small>
         </div>
         <Button type="button" kind="primary" disabled={loading} onClick={lookup}>
           {loading ? "CONSULTANDO..." : "CONSULTAR"}
@@ -6650,511 +6920,6 @@ async function copyText(value) {
   textarea.select();
   document.execCommand("copy");
   textarea.remove();
-}
-
-function GoogleAdsWizard() {
-  const firstService = GOOGLE_ADS_SERVICES.dataimporter;
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [loadingSignals, setLoadingSignals] = useState(true);
-  const [importingGa4, setImportingGa4] = useState(false);
-  const [entries, setEntries] = useState([]);
-  const [campaigns, setCampaigns] = useState([]);
-  const [ga4Stats, setGa4Stats] = useState(null);
-  const [adsStatus, setAdsStatus] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [draft, setDraft] = useState({
-    objective: "leads",
-    service: "dataimporter",
-    audiences: ["PYMEs", "Operaciones"],
-    geo: "España",
-    budget: 600,
-    landingUrl: "https://aeternal-flow.es/",
-    campaignName: "Æternal Flow - DataImporter - Leads",
-    customKeywords: "",
-    negativeKeywords: GOOGLE_ADS_NEGATIVES.join(", "),
-    headline1: firstService.headlines[0],
-    headline2: firstService.headlines[1],
-    headline3: firstService.headlines[2],
-    description1: firstService.descriptions[0],
-    description2: firstService.descriptions[1],
-  });
-
-  const loadSignals = useCallback(async () => {
-    setLoadingSignals(true);
-    try {
-      const [statsResult, campaignsResult, adsResult] = await Promise.all([
-        api("/stats/monthly"),
-        api("/stats/campaigns"),
-        api("/google-ads/status").catch((statusError) => ({
-          configured: false,
-          error: statusError.message,
-          checks: [],
-        })),
-      ]);
-      setEntries(Array.isArray(statsResult.entries) ? statsResult.entries : []);
-      setCampaigns(Array.isArray(campaignsResult.campaigns) ? campaignsResult.campaigns : []);
-      setAdsStatus(adsResult);
-    } catch (loadError) {
-      setError(loadError.message);
-    } finally {
-      setLoadingSignals(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadSignals();
-  }, [loadSignals]);
-
-  const service = GOOGLE_ADS_SERVICES[draft.service] || firstService;
-  const objective = GOOGLE_ADS_OBJECTIVES[draft.objective] || GOOGLE_ADS_OBJECTIVES.leads;
-  const dailyBudget = Math.max(0, Number(draft.budget || 0) / 30);
-  const keywords = useMemo(() => {
-    const custom = draft.customKeywords
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    return [...new Set([...service.keywords, ...custom])];
-  }, [draft.customKeywords, service.keywords]);
-  const negativeKeywords = useMemo(() => draft.negativeKeywords
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean), [draft.negativeKeywords]);
-  const currentRows = useMemo(() => statsRowsForMonth(entries, selectedYear, selectedMonth, campaigns)
-    .filter((row) => String(row.channel || "").trim())
-    .sort((left, right) => Number(right.clicks || 0) - Number(left.clicks || 0)), [campaigns, entries, selectedMonth, selectedYear]);
-  const trafficSignals = useMemo(() => currentRows.slice(0, 5).map((row) => ({
-    channel: row.channel,
-    clicks: Number(row.clicks || 0),
-    interactions: Number(row.interactions || 0),
-    impressions: Number(row.impressions || 0),
-    score: Number(row.clicks || 0) * 4 + Number(row.interactions || 0) * 2 + Math.round(Number(row.impressions || 0) / 20),
-  })), [currentRows]);
-  const serviceMentions = useMemo(() => {
-    const haystack = [
-      draft.service,
-      draft.campaignName,
-      draft.customKeywords,
-      ...campaigns.flatMap((campaign) => [campaign.name, campaign.campaign, campaign.content, campaign.term]),
-    ].join(" ").toLowerCase();
-    return Object.entries(GOOGLE_ADS_SERVICES)
-      .map(([id, item]) => ({
-        id,
-        name: item.name,
-        count: item.keywords.reduce((sum, keyword) => sum + (haystack.includes(keyword.split(" ")[0].toLowerCase()) ? 1 : 0), 0) + (haystack.includes(id) ? 2 : 0),
-      }))
-      .sort((left, right) => right.count - left.count);
-  }, [campaigns, draft.campaignName, draft.customKeywords, draft.service]);
-  const relevantCampaigns = useMemo(() => campaigns
-    .filter((campaign) => {
-      const text = [campaign.name, campaign.campaign, campaign.content, campaign.term, campaign.source, campaign.medium].join(" ").toLowerCase();
-      return text.includes(service.name.toLowerCase()) || service.keywords.some((keyword) => text.includes(keyword.split(" ")[0].toLowerCase()));
-    })
-    .slice(0, 6), [campaigns, service.keywords, service.name]);
-  const campaignScore = useMemo(() => {
-    const signalScore = trafficSignals.reduce((sum, item) => sum + item.score, 0);
-    const linkScore = Math.min(30, relevantCampaigns.length * 5);
-    const serviceScore = Math.min(20, (serviceMentions[0]?.count || 0) * 4);
-    return Math.min(100, Math.round(signalScore + linkScore + serviceScore));
-  }, [relevantCampaigns.length, serviceMentions, trafficSignals]);
-  const campaignTemperature = campaignScore >= 75 ? "muy caliente" : campaignScore >= 45 ? "caliente" : campaignScore >= 20 ? "activa" : "fría";
-  const recommendedChannel = trafficSignals[0]?.channel || "canal pendiente de datos";
-  const evidenceSummary = [
-    trafficSignals.length ? `${trafficSignals.length} señales de tráfico en ${MONTHS[selectedMonth - 1]} ${selectedYear}` : "Sin señales mensuales suficientes todavía",
-    campaigns.length ? `${campaigns.length} enlaces UTM guardados` : "Sin enlaces UTM guardados",
-    ga4Stats ? `${formatStatsNumber((ga4Stats.utmRows || []).length)} entradas UTM importadas de GA4` : "GA4 pendiente de importar en esta pantalla",
-  ];
-  const payload = useMemo(() => ({
-    account: "Æternal Flow",
-    type: "brief_preparacion_campana",
-    campaignName: draft.campaignName,
-    temperature: campaignTemperature,
-    opportunityScore: campaignScore,
-    objective: objective.label,
-    service: service.name,
-    offer: service.offer,
-    audiences: draft.audiences,
-    geo: draft.geo,
-    monthlyBudget: Number(draft.budget || 0),
-    dailyBudget: Number(dailyBudget.toFixed(2)),
-    bidStrategy: objective.bid,
-    landingUrl: draft.landingUrl,
-    conversionAction: objective.cta,
-    keywords,
-    negativeKeywords,
-    evidence: {
-      month: `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`,
-      trafficSignals,
-      savedUtmLinks: relevantCampaigns.map((campaign) => ({
-        name: campaign.name || campaign.campaign,
-        source: campaign.source,
-        medium: campaign.medium,
-        campaign: campaign.campaign,
-        destination: campaignDestinationLabel(campaign.url),
-      })),
-      ga4UtmRows: (ga4Stats?.utmRows || []).slice(0, 8),
-      ga4OutboundRows: (ga4Stats?.outboundRows || []).slice(0, 8),
-    },
-    recommendation: {
-      startWith: recommendedChannel,
-      hypothesis: `Probar ${service.name} con ${objective.label.toLowerCase()} usando los canales que ya muestran clic o intención.`,
-      nextAction: "crear una campaña manual en Google Ads o pedir al generador variantes con este brief",
-    },
-    ads: {
-      headlines: [draft.headline1, draft.headline2, draft.headline3].filter(Boolean),
-      descriptions: [draft.description1, draft.description2].filter(Boolean),
-    },
-    googleAdsConnection: {
-      configured: Boolean(adsStatus?.configured),
-      checks: adsStatus?.checks || [],
-    },
-    scoreSource: "heuristica de Flow Console (stats mensuales + UTM). No es la API de Google Ads.",
-  }), [adsStatus, campaignScore, campaignTemperature, dailyBudget, draft, ga4Stats, keywords, negativeKeywords, objective, recommendedChannel, relevantCampaigns, selectedMonth, selectedYear, service, trafficSignals]);
-
-  function setField(field, value) {
-    setDraft((current) => ({ ...current, [field]: value }));
-  }
-
-  function selectService(serviceId) {
-    const next = GOOGLE_ADS_SERVICES[serviceId] || firstService;
-    setDraft((current) => ({
-      ...current,
-      service: serviceId,
-      campaignName: `Æternal Flow - ${next.name} - ${GOOGLE_ADS_OBJECTIVES[current.objective].label}`,
-      headline1: next.headlines[0],
-      headline2: next.headlines[1],
-      headline3: next.headlines[2],
-      description1: next.descriptions[0],
-      description2: next.descriptions[1],
-    }));
-  }
-
-  function selectObjective(objectiveId) {
-    const next = GOOGLE_ADS_OBJECTIVES[objectiveId] || GOOGLE_ADS_OBJECTIVES.leads;
-    setDraft((current) => ({
-      ...current,
-      objective: objectiveId,
-      campaignName: `Æternal Flow - ${GOOGLE_ADS_SERVICES[current.service].name} - ${next.label}`,
-    }));
-  }
-
-  async function copyPayload() {
-    setError("");
-    setMessage("");
-    try {
-      await copyText(JSON.stringify(payload, null, 2));
-      setMessage("JSON de campaña copiado");
-    } catch (copyError) {
-      setError(`No se pudo copiar: ${copyError.message}`);
-    }
-  }
-
-  function downloadPayload() {
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${cleanUtmValue(draft.campaignName) || "google-ads-campaign"}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setMessage("JSON preparado para descargar");
-  }
-
-  async function importGa4Signals() {
-    setImportingGa4(true);
-    setError("");
-    setMessage("");
-    try {
-      const result = await api(`/stats/ga4?year=${selectedYear}&month=${selectedMonth}`);
-      setGa4Stats(result);
-      setMessage(`Señales GA4 importadas: ${(result.utmRows || []).length} entradas UTM y ${(result.outboundRows || []).length} salidas`);
-    } catch (importError) {
-      setGa4Stats(null);
-      setError(importError.message.includes("GA4 no está configurado")
-        ? "Falta configurar GA4. Abre /oauth/ga4/start y guarda el refresh token en Railway."
-        : importError.message);
-    } finally {
-      setImportingGa4(false);
-    }
-  }
-
-  return (
-    <main className="ads-workspace">
-      <section className="ads-shell">
-        <header className="generator-header ads-header">
-          <div>
-            <span className="eyebrow">ADS</span>
-            <h2>Radar de campañas</h2>
-            <p>Prepara un brief con señales de esta consola (stats y UTM). No crea campañas en Google Ads. El CPA de plantilla no se muestra como dato real.</p>
-          </div>
-          <div className={`ads-connection ${adsStatus?.live ? "ready" : "pending"}`}>
-            <strong>
-              {adsStatus?.live
-                ? `Google Ads: API OK${adsStatus.account ? ` · ${adsStatus.account}` : ""}`
-                : adsStatus?.configured
-                  ? "Google Ads: no responde"
-                  : "Google Ads: no conectado"}
-            </strong>
-            <span>
-              {adsStatus?.error
-                ? adsStatus.error
-                : adsStatus?.live
-                  ? "La API respondió. Esta pantalla no crea campañas; copia el brief."
-                  : adsStatus?.configured
-                    ? "Hay credenciales, pero la API no contestó. No se finge conexión."
-                    : (adsStatus?.checks || []).filter((check) => !check.configured).map((check) => check.label).join(" · ") || "Faltan variables de Google Ads"}
-            </span>
-          </div>
-        </header>
-
-        {(error || message) && (
-          <div className={error ? "publication-feedback error" : "publication-feedback success"}>
-            <span>{error || message}</span>
-          </div>
-        )}
-
-        <section className="ads-layout">
-          <form className="panel ads-builder">
-            <section className="ads-step">
-              <header>
-                <span>1</span>
-                <div>
-                  <strong>Periodo y señales</strong>
-                  <small>Primero mira qué tráfico real existe.</small>
-                </div>
-              </header>
-              <div className="ads-period-row">
-                <label className="ads-field">
-                  Año
-                  <input type="number" value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value) || currentYear)} />
-                </label>
-                <label className="ads-field">
-                  Mes
-                  <select value={selectedMonth} onChange={(event) => setSelectedMonth(Number(event.target.value))}>
-                    {MONTHS.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
-                  </select>
-                </label>
-                <Button type="button" onClick={loadSignals}>ACTUALIZAR</Button>
-                <Button type="button" kind="primary" disabled={importingGa4} onClick={importGa4Signals}>{importingGa4 ? "IMPORTANDO..." : "IMPORTAR GA4"}</Button>
-              </div>
-              <div className="ads-signal-list">
-                {evidenceSummary.map((item) => <span key={item}>{item}</span>)}
-              </div>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>2</span>
-                <div>
-                  <strong>Objetivo</strong>
-                  <small>Qué hipótesis quieres probar con campaña.</small>
-                </div>
-              </header>
-              <div className="ads-choice-row">
-                {Object.entries(GOOGLE_ADS_OBJECTIVES).map(([id, item]) => (
-                  <button key={id} type="button" className={draft.objective === id ? "selected" : ""} onClick={() => selectObjective(id)}>
-                    {item.label}
-                    <small>{item.bid}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>3</span>
-                <div>
-                  <strong>Servicio</strong>
-                  <small>Elige qué oferta convertir en campaña.</small>
-                </div>
-              </header>
-              <div className="ads-service-grid">
-                {Object.entries(GOOGLE_ADS_SERVICES).map(([id, item]) => (
-                  <button key={id} type="button" className={draft.service === id ? "selected" : ""} onClick={() => selectService(id)}>
-                    <strong>{item.name}</strong>
-                    <span>{item.offer}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>4</span>
-                <div>
-                  <strong>Público</strong>
-                  <small>Segmentos de partida para orientar textos y campaña.</small>
-                </div>
-              </header>
-              <OptionGroup
-                multi
-                options={GOOGLE_ADS_AUDIENCES}
-                value={draft.audiences}
-                onChange={(value) => setField("audiences", value)}
-              />
-              <label className="ads-field">
-                Zona
-                <input value={draft.geo} onChange={(event) => setField("geo", event.target.value)} />
-              </label>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>5</span>
-                <div>
-                  <strong>Presupuesto</strong>
-                  <small>Estimación simple para decidir si tiene sentido.</small>
-                </div>
-              </header>
-              <div className="ads-budget-row">
-                {[300, 600, 1200, 2500].map((value) => (
-                  <button key={value} type="button" className={Number(draft.budget) === value ? "selected" : ""} onClick={() => setField("budget", value)}>
-                    {value} €
-                  </button>
-                ))}
-                <input type="number" min="0" value={draft.budget} onChange={(event) => setField("budget", event.target.value)} />
-              </div>
-              <div className="ads-metrics">
-                <span><strong>{dailyBudget.toFixed(2)} €</strong> / día (presupuesto ÷ 30)</span>
-                <span>Score {campaignScore}/100 · heurística de stats/UTM de esta consola, no de Google Ads</span>
-              </div>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>6</span>
-                <div>
-                  <strong>Keywords</strong>
-                  <small>Base sugerida más lo que quieras añadir.</small>
-                </div>
-              </header>
-              <div className="ads-keyword-list">
-                {service.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}
-              </div>
-              <div className="ads-field-grid">
-                <label className="ads-field">
-                  Añadir keywords
-                  <input value={draft.customKeywords} onChange={(event) => setField("customKeywords", event.target.value)} placeholder="separadas por coma" />
-                </label>
-                <label className="ads-field">
-                  Negativas
-                  <input value={draft.negativeKeywords} onChange={(event) => setField("negativeKeywords", event.target.value)} />
-                </label>
-              </div>
-            </section>
-
-            <section className="ads-step">
-              <header>
-                <span>7</span>
-                <div>
-                  <strong>Anuncio</strong>
-                  <small>Titulares y descripciones editables antes de exportar.</small>
-                </div>
-              </header>
-              <div className="ads-field-grid">
-                {["headline1", "headline2", "headline3"].map((field, index) => (
-                  <label className="ads-field" key={field}>
-                    Titular {index + 1}
-                    <input value={draft[field]} maxLength="30" onChange={(event) => setField(field, event.target.value)} />
-                    <small>{draft[field].length}/30</small>
-                  </label>
-                ))}
-                {["description1", "description2"].map((field, index) => (
-                  <label className="ads-field wide" key={field}>
-                    Descripción {index + 1}
-                    <textarea value={draft[field]} maxLength="90" onChange={(event) => setField(field, event.target.value)} />
-                    <small>{draft[field].length}/90</small>
-                  </label>
-                ))}
-                <label className="ads-field wide">
-                  Landing
-                  <input value={draft.landingUrl} onChange={(event) => setField("landingUrl", event.target.value)} />
-                </label>
-              </div>
-            </section>
-          </form>
-
-          <aside className="panel ads-preview">
-            <div className="panel-heading">
-              <span className="section-mark" />
-              <div>
-                <strong>Brief de campaña</strong>
-                <small>{draft.campaignName}</small>
-              </div>
-            </div>
-            <section className="ads-intelligence">
-              <article>
-                <span>Temperatura</span>
-                <strong>{campaignTemperature}</strong>
-                <small>{campaignScore}/100 · heurística local</small>
-              </article>
-              <article>
-                <span>Primer canal</span>
-                <strong>{recommendedChannel}</strong>
-                <small>según clics/señal disponible</small>
-              </article>
-            </section>
-            <section className="ads-summary">
-              <strong>Señales detectadas</strong>
-              {trafficSignals.length ? (
-                <div className="ads-signal-stack">
-                  {trafficSignals.map((signal) => (
-                    <div key={signal.channel}>
-                      <b>{signal.channel}</b>
-                      <span>{formatStatsNumber(signal.clicks)} clics · {formatStatsNumber(signal.interactions)} interacciones · score {signal.score}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty">Sin señales del mes. Importa GA4 o guarda datos en Estadísticas.</div>
-              )}
-            </section>
-            <article className="ads-search-card">
-              <span>Anuncio · {draft.landingUrl.replace(/^https?:\/\//, "")}</span>
-              <h3>{[draft.headline1, draft.headline2, draft.headline3].filter(Boolean).join(" | ")}</h3>
-              <p>{[draft.description1, draft.description2].filter(Boolean).join(" ")}</p>
-            </article>
-            <section className="ads-summary">
-              <strong>Plan</strong>
-              <dl>
-                <div><dt>Objetivo</dt><dd>{objective.label}</dd></div>
-                <div><dt>Servicio</dt><dd>{service.name}</dd></div>
-                <div><dt>Puja</dt><dd>{objective.bid}</dd></div>
-                <div><dt>Zona</dt><dd>{draft.geo}</dd></div>
-                <div><dt>Keywords</dt><dd>{keywords.length}</dd></div>
-                <div><dt>Negativas</dt><dd>{negativeKeywords.length}</dd></div>
-              </dl>
-            </section>
-            <section className="ads-summary">
-              <strong>UTM útiles para este servicio</strong>
-              {relevantCampaigns.length ? (
-                <div className="ads-signal-stack">
-                  {relevantCampaigns.map((campaign) => (
-                    <div key={campaign.id}>
-                      <b>{campaign.name || campaign.campaign}</b>
-                      <span>{[campaign.source, campaign.medium, campaign.campaign, campaign.content].filter(Boolean).join(" / ")}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty">No hay UTM guardadas que parezcan de {service.name}. Puedes crearlas en Estadísticas.</div>
-              )}
-            </section>
-            <pre className="ads-json-preview">{JSON.stringify(payload, null, 2)}</pre>
-            <footer className="ads-actions">
-              <Button type="button" kind="primary" onClick={copyPayload}>COPIAR BRIEF</Button>
-              <Button type="button" onClick={downloadPayload}>DESCARGAR BRIEF</Button>
-            </footer>
-          </aside>
-        </section>
-      </section>
-    </main>
-  );
 }
 
 function StatsDashboard() {
@@ -7508,7 +7273,7 @@ function StatsDashboard() {
 
         {(error || message) && (
           <div className={error ? "publication-feedback error" : "publication-feedback success"}>
-            <span>{error || message}</span>
+            <StatusMessage value={error || message} />
           </div>
         )}
 
@@ -7834,7 +7599,7 @@ export default function App() {
   function syncCurrentView() {
     if (view === "inbox") setInboxRefresh((current) => current + 1);
     else if (view === "calendar") setCalendarRefresh((current) => current + 1);
-    else if (view === "stats" || view === "add" || view === "correct" || view === "ads") return;
+    else if (view === "stats" || view === "add" || view === "correct") return;
     else loadWorkflows();
   }
 
@@ -7877,16 +7642,28 @@ export default function App() {
     navigate("instagram");
   }, [navigate]);
 
-  const openPublicationTarget = useCallback((targetId, task = null) => {
+  const openPublicationTarget = useCallback(async (targetId, task = null) => {
     if (task?.dueDate) setCalendarFocusDateKey(task.dueDate);
     setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
-    setInstagramDraft({
+    let draft = {
       source: "publication",
       targetId,
       caption: task?.notes || "",
       text: task?.notes || "",
+      publicationScheduledAt: task?.dueDate && task?.time ? `${task.dueDate}T${task.time}` : "",
+      scheduledAt: task?.dueDate && task?.time ? `${task.dueDate}T${task.time}:00` : "",
       updatedAt: Date.now(),
-    });
+    };
+    if (task?.publicationPostId) {
+      try {
+        const result = await api("/publications/posts");
+        const post = (result.posts || []).find((item) => item.id === task.publicationPostId);
+        if (post) draft = { ...post, source: "publication", updatedAt: Date.now() };
+      } catch {
+        // Keep the task draft if the post cannot be read.
+      }
+    }
+    setInstagramDraft(draft);
     navigate("instagram");
   }, [navigate]);
 
@@ -8007,12 +7784,6 @@ export default function App() {
           >
             ESTADÍSTICAS
           </button>
-          <button
-            className={view === "ads" ? "active" : ""}
-            onClick={() => navigate("ads")}
-          >
-            ADS
-          </button>
         </nav>
         <div className="top-actions">
           <Button onClick={goBack}>ATRÁS</Button>
@@ -8039,8 +7810,6 @@ export default function App() {
         <RagEntryConsole />
       ) : view === "correct" ? (
         <RagCorrectConsole />
-      ) : view === "ads" ? (
-        <GoogleAdsWizard />
       ) : view === "inbox" ? (
         <Inbox
           refreshToken={inboxRefresh}

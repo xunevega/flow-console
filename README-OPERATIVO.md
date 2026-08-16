@@ -1,6 +1,6 @@
 # Flow Console: README operativo
 
-Flow Console es la consola diaria para planificar acciones, preparar publicaciones, guardar notas, corregir memoria editorial, medir rendimiento y crear enlaces de campana.
+Flow Console es la consola diaria para planificar acciones, preparar publicaciones, guardar notas, corregir memoria editorial, medir rendimiento y crear enlaces UTM.
 
 No es una pagina de reporting decorativo. Es una mesa de trabajo.
 
@@ -14,8 +14,7 @@ Flow Console
 ├─ Corregir
 ├─ Publicaciones
 ├─ Avisos
-├─ Estadísticas
-└─ Ads
+└─ Estadísticas
 ```
 
 ## Principio de uso
@@ -100,7 +99,7 @@ Regla operativa:
 
 ## Corregir
 
-Corregir sirve para limpiar la memoria existente.
+Corregir sirve para ajustar el estilo que el cerebro ya tiene.
 
 Sirve para:
 
@@ -236,23 +235,6 @@ Organizacion:
 - Recuperar carga una copia para crear una nueva variante.
 - Guardar crea un nuevo enlace, no pisa el anterior.
 
-## Ads
-
-Ads es el asistente para preparar campanas publicitarias.
-
-Sirve para:
-
-- Elegir objetivo.
-- Elegir servicio.
-- Preparar titulares y descripciones.
-- Exportar estructura de campana.
-- Dejar listo el material antes de conectar API.
-
-Estado operativo:
-
-- Puede preparar campanas.
-- La publicacion directa depende de credenciales Google Ads.
-
 ## Automatizaciones y workflows
 
 Los workflows existen como infraestructura tecnica, pero no deben ser el punto principal de trabajo.
@@ -358,5 +340,4 @@ Añadir = meter conocimiento nuevo.
 Corregir = limpiar memoria.
 Publicaciones = crear, adaptar, publicar y editar contenido.
 Estadísticas = medir, GA4 y UTMs.
-Ads = preparar campanas.
 ```
