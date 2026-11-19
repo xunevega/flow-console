@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import Estadisticas from "./Estadisticas.jsx";
 const GROUP_COLORS = ["#4a7ab5", "#4a9e7a", "#7a60a8", "#c47a3a", "#c45050", "#8c8277"];
 const GENERATOR_OPTIONS = {
   intencion: ["Crear", "Analizar", "Publicar", "Planificar", "Aprender"],
@@ -7864,7 +7865,7 @@ export default function App() {
           initialForumPublicationMode={publicationForumContext.publicationMode}
         />
       ) : view === "stats" ? (
-        <StatsDashboard />
+        <Estadisticas api={api} Antiguo={StatsDashboard} />
       ) : (
         <Calendar
           workflows={workflows}

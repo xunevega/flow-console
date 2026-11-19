@@ -11,6 +11,7 @@ import express from "express";
 import pg from "pg";
 import { PDFParse } from "pdf-parse";
 import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
+import { montarEstadisticas, tokenPinterest, refreshTokenYoutube, guardarRefreshYoutube, marcarEnlaces, conMarca, YOUTUBE_SCOPES } from "./estadisticas.mjs";
 
 const app = express();
 const { Pool } = pg;
@@ -75,7 +76,6 @@ const youtubePrivacyStatus = ["private", "unlisted", "public"].includes(process.
   ? process.env.YOUTUBE_PRIVACY_STATUS
   : "public";
 const youtubeCategoryId = String(process.env.YOUTUBE_CATEGORY_ID || "22").trim();
-const pinterestAccessToken = String(process.env.PINTEREST_ACCESS_TOKEN || "").trim();
 const pinterestBoardId = String(process.env.PINTEREST_BOARD_ID || "").trim();
 const pinterestLinkUrl = safeUrl(process.env.PINTEREST_LINK_URL) || safeUrl(process.env.FLOW_CONSOLE_PUBLIC_URL) || "";
 const ftpHost = String(process.env.FTP_HOST || "").trim();
@@ -194,6 +194,8 @@ app.use((req, res, next) => {
     || pathName === "/api/instagram/media"
     || pathName === "/api/publications/library"
     || pathName === "/api/calendar/notes/media"
+    || pathName === "/api/estadisticas/linkedin"
+    || pathName === "/api/estadisticas/captura"
     || /^\/api\/publications\/posts\/[^/]+\/media$/.test(pathName)
   );
   if (largeJsonRequest && !validSession(req)) {
@@ -456,7 +458,7 @@ function youtubeOAuthConfig() {
   return {
     clientId: String(process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || "").trim(),
     clientSecret: String(process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || "").trim(),
-    refreshToken: String(process.env.YOUTUBE_REFRESH_TOKEN || process.env.GOOGLE_REFRESH_TOKEN || "").trim(),
+    refreshToken: refreshTokenYoutube(),
   };
 }
 
@@ -504,7 +506,7 @@ function youtubeOAuthUrl(req) {
     client_id: clientId,
     redirect_uri: youtubeOAuthRedirectUri(req),
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/youtube.upload",
+    scope: YOUTUBE_SCOPES,
     access_type: "offline",
     prompt: "consent",
     state: oauthState(),
@@ -3588,7 +3590,7 @@ async function publicationPreflight(payload, workerHealth = null) {
     if (safeUrl(payload.videoUrl || payload.imageUrl)) ok("video", "Vídeo OK");
     else block("video", "Falta vídeo", "Sube un MP4, WebM o MOV.");
   } else if (targetId === "pinterest") {
-    if (pinterestAccessToken && pinterestBoardId) ok("pinterest", "Pinterest OK");
+    if (tokenPinterest() && pinterestBoardId) ok("pinterest", "Pinterest OK");
     else block("pinterest", "Pinterest sin token", "Faltan PINTEREST_ACCESS_TOKEN o PINTEREST_BOARD_ID.");
     if (safeUrl(payload.imageUrl)) ok("image", "Imagen OK");
     else block("image", "Falta imagen", "Pinterest necesita una imagen pública.");
@@ -4319,7 +4321,7 @@ function pinterestTitleAndDescription(caption) {
 }
 
 async function publishToPinterest(payload) {
-  if (!pinterestAccessToken || !pinterestBoardId) {
+  if (!tokenPinterest() || !pinterestBoardId) {
     throw new Error("Pinterest no está configurado: faltan PINTEREST_ACCESS_TOKEN o PINTEREST_BOARD_ID");
   }
   const imageUrl = safeUrl(payload.imageUrl);
@@ -4334,11 +4336,11 @@ async function publishToPinterest(payload) {
       url: imageUrl,
     },
   };
-  if (pinterestLinkUrl) body.link = pinterestLinkUrl;
+  if (pinterestLinkUrl) body.link = conMarca(pinterestLinkUrl, "pinterest", payload.marcaFlow || "");
   const response = await fetch("https://api.pinterest.com/v5/pins", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${pinterestAccessToken}`,
+      Authorization: `Bearer ${tokenPinterest()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -4369,6 +4371,7 @@ async function publishToPinterest(payload) {
 }
 
 async function publishPublicationPayload(payload, source = "flow-console") {
+  marcarEnlaces(payload);
   if (payload?.target?.id === "instagram" && instagramApiConfigurada()) {
     return publicarEnInstagram(payload, { dataDirectory });
   }
@@ -5729,8 +5732,8 @@ app.get("/api/oauth/youtube/status", requireAuth, (req, res) => {
 app.get("/api/oauth/pinterest/status", requireAuth, (_, res) => {
   res.json({
     ok: true,
-    configured: Boolean(pinterestAccessToken && pinterestBoardId),
-    hasAccessToken: Boolean(pinterestAccessToken),
+    configured: Boolean(tokenPinterest() && pinterestBoardId),
+    hasAccessToken: Boolean(tokenPinterest()),
     hasBoardId: Boolean(pinterestBoardId),
     hasLinkUrl: Boolean(pinterestLinkUrl),
   });
@@ -5795,10 +5798,10 @@ app.get("/api/publications/channels/status", requireAuth, async (_, res) => {
     {
       id: "pinterest",
       name: "Pinterest",
-      level: pinterestAccessToken && pinterestBoardId ? "active" : "pending",
-      label: pinterestAccessToken && pinterestBoardId ? "Pinterest OK" : "Pendiente de credenciales",
+      level: tokenPinterest() && pinterestBoardId ? "active" : "pending",
+      label: tokenPinterest() && pinterestBoardId ? "Pinterest OK" : "Pendiente de credenciales",
       delivery: "Pinterest API",
-      detail: pinterestAccessToken && pinterestBoardId
+      detail: tokenPinterest() && pinterestBoardId
         ? "Publicación directa por API configurada."
         : "Añade PINTEREST_ACCESS_TOKEN y PINTEREST_BOARD_ID en Railway.",
     },
@@ -5908,6 +5911,12 @@ app.get("/oauth/youtube/callback", async (req, res) => {
     if (!code) throw new Error("Google no devolvió código OAuth.");
     const result = await exchangeYouTubeOAuthCode(req, code);
     const refreshToken = String(result.refresh_token || "").trim();
+    if (refreshToken) {
+      await guardarRefreshYoutube(refreshToken, result.scope);
+      return res.type("html").send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube conectado</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#f6f1e8;color:#241f19;margin:0;padding:40px;line-height:1.5}main{max-width:640px;margin:auto}a{color:#4a7ab5}</style>
+<main><h1>YouTube conectado</h1><p>Flow ya puede subir vídeos y leer sus estadísticas. No hace falta copiar nada.</p><p><a href="/">Volver a Flow</a></p></main>`);
+    }
     const body = refreshToken
       ? `YOUTUBE_REFRESH_TOKEN=${refreshToken}`
       : JSON.stringify(result, null, 2);
@@ -7584,6 +7593,25 @@ app.delete("/api/stats/campaigns/:id", requireAuth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: `No se pudo borrar la campaña: ${error.message}` });
   }
+});
+
+montarEstadisticas(app, {
+  requireAuth,
+  dataDirectory,
+  ga4OAuthConfig,
+  ga4AccessToken,
+  ga4RunReport,
+  searchConsoleOAuthConfig,
+  searchConsoleAccessToken,
+  youtubeOAuthConfig,
+  requestAeternalBlogArticles,
+  readPublicationPosts,
+  openaiChat,
+  openaiVisionModel,
+  publicOrigin,
+  oauthState,
+  validOauthState,
+  escapeHtml,
 });
 
 app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) => {
