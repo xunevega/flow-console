@@ -5784,6 +5784,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   line-height: 1.35;
 }
 .instagram-history article button,
+.instagram-history article .history-row-actions a,
 .history-heading-actions button {
   flex: 0 0 auto;
   border: 0;
@@ -5800,6 +5801,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--red);
 }
 .instagram-history article button:hover,
+.instagram-history article .history-row-actions a:hover,
 .history-heading-actions button:hover {
   color: var(--blue);
 }

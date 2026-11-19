@@ -10,6 +10,7 @@ import * as ftp from "basic-ftp";
 import express from "express";
 import pg from "pg";
 import { PDFParse } from "pdf-parse";
+import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
 
 const app = express();
 const { Pool } = pg;
@@ -3564,6 +3565,8 @@ function deliveryModeForPublication(post = {}) {
   const resultMode = String(post.result?.deliveryMode || "").trim();
   if (resultMode === "youtube_data_api") return "API";
   if (resultMode === "pinterest_api") return "API";
+  if (resultMode === "instagram_api") return "API";
+  if (resultMode === "manual") return "a mano";
   if (targetId === "blog") return "API";
   if (targetId === "tiktok") return post.options?.tiktokMode === "publish" ? "worker" : "asistido";
   if (["instagram", "linkedin"].includes(targetId)) return "worker";
@@ -3601,9 +3604,15 @@ async function publicationPreflight(payload, workerHealth = null) {
     else warn("linkedin", "LinkedIn sesión a revisar", worker.error || "Worker sin sesión confirmada.");
     if (payload?.options?.linkedinMode === "article") ok("mode", "Artículo LinkedIn", payload.imageUrl ? "Con imagen de portada." : "Sin imagen de portada.");
   } else if (targetId === "instagram") {
-    const worker = workerHealth || await externalWorkerHealth();
-    if (worker.ok && worker.loggedIn) ok("instagram", "Instagram sesión OK", "Worker disponible.");
-    else warn("instagram", "Instagram sesión a revisar", worker.error || "Worker sin sesión confirmada.");
+    if (instagramApiConfigurada()) {
+      ok("instagram", "Instagram API oficial", "Publica directamente con la API de Instagram.");
+    } else if (!publicationExternalWorkerUrl) {
+      ok("instagram", "Instagram a mano", "Flow lo deja listo: descargas la imagen, copias el texto y lo publicas en la app.");
+    } else {
+      const worker = workerHealth || await externalWorkerHealth();
+      if (worker.ok && worker.loggedIn) ok("instagram", "Instagram sesión OK", "Worker disponible.");
+      else warn("instagram", "Instagram sesión a revisar", worker.error || "Worker sin sesión confirmada.");
+    }
     if (safeUrl(payload.imageUrl || payload.videoUrl)) ok("media", "Media OK");
     else block("media", "Falta media", "Instagram necesita imagen o vídeo.");
   } else if (targetId === "blog") {
@@ -4360,8 +4369,15 @@ async function publishToPinterest(payload) {
 }
 
 async function publishPublicationPayload(payload, source = "flow-console") {
+  if (payload?.target?.id === "instagram" && instagramApiConfigurada()) {
+    return publicarEnInstagram(payload, { dataDirectory });
+  }
   if (payload?.target?.id === "instagram" && publicationExternalWorkerUrl) {
     return publishWithExternalWorker(payload, "/instagram/publish");
+  }
+  if (payload?.target?.id === "instagram") {
+    // Sin API ni worker: Flow lo deja listo y Roberto lo publica en la app de Instagram.
+    return { ok: true, status: "manual_pending_confirmation", deliveryMode: "manual" };
   }
   if (payload?.target?.id === "linkedin" && publicationExternalWorkerUrl) {
     return publishWithExternalWorker(payload, "/linkedin/publish");
@@ -5737,12 +5753,18 @@ app.get("/api/publications/channels/status", requireAuth, async (_, res) => {
     {
       id: "instagram",
       name: "Instagram",
-      level: worker.ok && worker.loggedIn ? "active" : "attention",
-      label: worker.ok && worker.loggedIn ? "Sesión OK" : worker.ok ? "Sesión a revisar" : "Worker caído",
-      delivery: "Worker navegador",
-      detail: worker.ok
-        ? (worker.loggedIn ? "Worker disponible con sesión compartida." : "Worker responde, pero no confirma sesión.")
-        : worker.error,
+      ...(instagramApiConfigurada()
+        ? { level: "active", label: "API oficial", delivery: "API de Instagram", detail: "Publica directamente con la API oficial de Instagram." }
+        : !publicationExternalWorkerUrl
+        ? { level: "active", label: "A mano", delivery: "App de Instagram", detail: "Flow deja la imagen y el texto listos; se publica desde la app de Instagram." }
+        : {
+          level: worker.ok && worker.loggedIn ? "active" : "attention",
+          label: worker.ok && worker.loggedIn ? "Sesión OK" : worker.ok ? "Sesión a revisar" : "Worker caído",
+          delivery: "Worker navegador",
+          detail: worker.ok
+            ? (worker.loggedIn ? "Worker disponible con sesión compartida." : "Worker responde, pero no confirma sesión.")
+            : worker.error,
+        }),
     },
     {
       id: "linkedin",

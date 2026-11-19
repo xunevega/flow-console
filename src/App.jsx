@@ -808,6 +808,7 @@ function publicationStatusLabel(status, action, targetId = "") {
   if (targetId === "youtube" && value === "uploaded_to_youtube") return "Subido a YouTube";
   if (targetId === "pinterest" && value === "created_on_pinterest") return "Publicado en Pinterest";
   if (targetId === "tiktok" && value === "pending_confirmation") return "Preparado para revisar";
+  if (targetId === "instagram" && value === "pending_confirmation") return "Listo para publicar en la app";
   if (isConfirmedPublicationStatus(value)) return "Publicado";
   if (value === "pending_confirmation") return "Publicación no confirmada";
   if (action === "schedule" || value === "scheduled") return "Programado";
@@ -836,6 +837,9 @@ function publicationResultMessage(action, post, targetName) {
   }
   if (targetId === "tiktok" && status === "pending_confirmation") {
     return url ? `TikTok preparado para revisar: ${url}` : "TikTok preparado para revisar.";
+  }
+  if (targetId === "instagram" && post?.deliveryMode === "a mano") {
+    return "Listo para Instagram. En el historial: Descargar, Copiar texto y, cuando lo publiques en la app, Ya publicado.";
   }
   if (isConfirmedPublicationStatus(status)) {
     return url ? `Publicado en ${targetName}: ${url}` : `Publicado en ${targetName}.`;
@@ -5837,15 +5841,20 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
             : "",
           n8nBrain?.sentToN8n ? "Memoria del cerebro enviada a n8n. No se afirma que n8n la usara." : "",
 	      ].filter(Boolean).join(" "));
-        if (action === "publish" && result.post?.publishedAt && !learned && !result.result?.duplicateSkipped) {
-          setError(result.trainingError
-            ? `El cerebro no recibió esta publicación: ${result.trainingError}`
-            : "Esta publicación no se envió a aprendizaje editorial.");
-        }
 	    } catch (submitError) {
       setError(submitError.message);
     } finally {
       setBusy("");
+    }
+  }
+
+  async function copyPostCaption(post) {
+    try {
+      await navigator.clipboard.writeText(String(post.caption || ""));
+      setError("");
+      setMessage("Texto copiado. Pégalo en Instagram.");
+    } catch {
+      setError("No se pudo copiar; selecciona el texto y cópialo a mano.");
     }
   }
 
@@ -5862,10 +5871,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           ? "Publicación confirmada. El cerebro la recibió para aprender."
           : "Publicación confirmada. Guardada en la memoria local.");
       } else {
+        // La memoria editorial está parada (19/11/2026): no se avisa de que no aprendió.
         setMessage("Publicación confirmada.");
-        setError(result.trainingError
-          ? `El cerebro no recibió el aprendizaje: ${result.trainingError}`
-          : "No hay aprendizaje editorial que enviar.");
       }
     } catch (confirmError) {
       setError(confirmError.message);
@@ -5990,6 +5997,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     if (selectedTarget.id === "pinterest") return "PUBLICAR EN PINTEREST";
     if (selectedTarget.id === "linkedin" && linkedinMode === "article") return "PUBLICAR ARTÍCULO";
     if (selectedTarget.id === "linkedin") return "PUBLICAR EN LINKEDIN";
+    if (selectedTarget.id === "instagram" && selectedChannel?.delivery === "App de Instagram") return "DEJAR LISTO PARA INSTAGRAM";
     if (selectedTarget.id === "instagram") return "PUBLICAR EN INSTAGRAM";
     if (selectedTarget.id === "blog") return "PUBLICAR EN BLOG";
     return `ENVIAR A ${selectedTarget.name.toUpperCase()}`;
@@ -6439,12 +6447,18 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                       <header>
                         <div>
                           <strong>{post.target?.name || post.targetId || "Destino"}</strong>
-                          <span>{publicationStatusLabel(post.status, post.action)} · {new Date(post.scheduledAt || post.publishedAt || post.createdAt || Date.now()).toLocaleString("es-ES")}</span>
+                          <span>{publicationStatusLabel(post.status, post.action, post.target?.id || post.targetId)} · {new Date(post.scheduledAt || post.publishedAt || post.createdAt || Date.now()).toLocaleString("es-ES")}</span>
                         </div>
                         <div className="history-row-actions">
+                          {post.deliveryMode === "a mano" && isPublicationAwaitingConfirmation(post.status) && (post.videoUrl || post.imageUrl) && (
+                            <a href={post.videoUrl || post.imageUrl} download target="_blank" rel="noreferrer">Descargar</a>
+                          )}
+                          {post.deliveryMode === "a mano" && isPublicationAwaitingConfirmation(post.status) && (
+                            <button type="button" onClick={() => copyPostCaption(post)}>Copiar texto</button>
+                          )}
                           {isPublicationAwaitingConfirmation(post.status) && (
                             <button type="button" disabled={Boolean(busy)} onClick={() => confirmPublication(post.id)}>
-                              {busy === "confirm" ? "..." : "Confirmar"}
+                              {busy === "confirm" ? "..." : post.deliveryMode === "a mano" ? "Ya publicado" : "Confirmar"}
                             </button>
                           )}
                         </div>
