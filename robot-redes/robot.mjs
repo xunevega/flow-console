@@ -298,8 +298,8 @@ async function instagram(p) {
     await franja(p, `Flow · Leyendo Instagram (${i + 1} de ${enlaces.length})…`);
     const fecha = await p.evaluar(`return document.querySelector("time[datetime]")?.getAttribute("datetime") || ""`).catch(() => "");
     if (fecha && Date.now() - Date.parse(fecha) > DIAS_INSTAGRAM * 864e5) {
-      log("  más antigua de 60 días; paro aquí.");
-      break;
+      log("  más antigua de 60 días (o fijada); la salto.");
+      continue;
     }
     const titulo = await p.evaluar(`return (document.querySelector("h1")?.innerText || "").split("\\n")[0].slice(0, 120)`).catch(() => "");
     // «Ver estadísticas» abre el panel con alcance, interacciones, etc.
