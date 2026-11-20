@@ -190,6 +190,7 @@ function Fichas({ fichas, api, recargar, avisar }) {
           </div>
           <label>Para quién<textarea rows={2} value={f.para || ""} onChange={(e) => cambiar(i, "para", e.target.value)} /></label>
           <label>Hechos<textarea rows={3} value={f.hechos || ""} onChange={(e) => cambiar(i, "hechos", e.target.value)} /></label>
+          <label>Qué buscar en foros (en inglés, separado por comas; vacío = lo de serie)<input value={f.buscar || ""} onChange={(e) => cambiar(i, "buscar", e.target.value)} /></label>
           <button type="button" className="button ghost" onClick={() => setLista(lista.filter((_, j) => j !== i))}>Quitar</button>
         </fieldset>
       ))}

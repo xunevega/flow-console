@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Estadisticas from "./Estadisticas.jsx";
 import Visibilidad from "./Visibilidad.jsx";
 import MiVoz from "./MiVoz.jsx";
+import AvisosFlow from "./AvisosFlow.jsx";
 const GROUP_COLORS = ["#4a7ab5", "#4a9e7a", "#7a60a8", "#c47a3a", "#c45050", "#8c8277"];
 const GENERATOR_OPTIONS = {
   intencion: ["Crear", "Analizar", "Publicar", "Planificar", "Aprender"],
@@ -7828,12 +7829,15 @@ export default function App() {
       ) : view === "correct" ? (
         <RagCorrectConsole />
       ) : view === "inbox" ? (
-        <Inbox
-          refreshToken={inboxRefresh}
-          selectedNoticeId={inboxSelectedNoticeId}
-          selectedWorkflowId={inboxSelectedWorkflowId}
-          initialPublicationMode={inboxPublicationMode}
-        />
+        <>
+          <main className="stats-workspace avf-envoltura"><div className="stats-shell vis"><AvisosFlow api={api} ir={navigate} /></div></main>
+          <Inbox
+            refreshToken={inboxRefresh}
+            selectedNoticeId={inboxSelectedNoticeId}
+            selectedWorkflowId={inboxSelectedWorkflowId}
+            initialPublicationMode={inboxPublicationMode}
+          />
+        </>
       ) : view === "management" ? (
         <main className="workspace">
 	          <WorkflowList

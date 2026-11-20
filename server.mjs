@@ -14,6 +14,7 @@ import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mj
 import { montarVisibilidad } from "./visibilidad.mjs";
 import { montarMiVoz, instruccionVoz } from "./mivoz.mjs";
 import { montarDesdeMibo } from "./desde-mibo.mjs";
+import { montarAvisosFlow } from "./avisos-flow.mjs";
 import { montarEstadisticas, tokenPinterest, refreshTokenYoutube, guardarRefreshYoutube, marcarEnlaces, conMarca, YOUTUBE_SCOPES } from "./estadisticas.mjs";
 
 const app = express();
@@ -7627,6 +7628,7 @@ montarEstadisticas(app, {
 
 montarMiVoz(app, { requireAuth, dataDirectory, openaiChat, openaiTextModel });
 montarDesdeMibo(app, { requireAuth, dataDirectory });
+montarAvisosFlow(app, { requireAuth, dataDirectory, openaiChat, openaiTextModel });
 montarVisibilidad(app, {
   requireAuth,
   dataDirectory,

@@ -529,6 +529,7 @@ export function montarVisibilidad(app, dependencias) {
         demo: texto(f.demo, 300),
         para: texto(f.para, 600),
         hechos: texto(f.hechos, 2500),
+        buscar: texto(f.buscar, 400),
       }))
       .filter((f) => f.nombre && f.hechos);
     if (!fichas.length) throw new Error("Hace falta al menos una ficha con nombre y hechos.");

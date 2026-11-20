@@ -7617,3 +7617,25 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .vis-sin-imagen { min-height: 90px; color: var(--secondary); font: inherit; font-size: 12px; }
 .vis-ideas article.libre { background: var(--raised); border-style: dashed; }
 .vis-etiqueta { justify-self: start; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--purple); }
+
+/* ───── Avisos de Flow ───── */
+.avf-envoltura .stats-shell { padding-top: 28px; padding-bottom: 0; }
+.avf { display: grid; gap: 10px; }
+.avf h3 { margin: 0; display: flex; align-items: center; gap: 8px; }
+.avf-cuenta { background: var(--amber); color: #fff; border-radius: 999px; font-size: 12px; padding: 1px 8px; }
+.avf-lista { display: grid; gap: 8px; }
+.avf-aviso { border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
+.avf-aviso > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 14px; cursor: pointer; }
+.avf-aviso > header div { display: grid; gap: 2px; min-width: 0; }
+.avf-aviso > header small { color: var(--secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avf-tipo { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border-lit); color: var(--secondary); }
+.avf-aviso.conversacion .avf-tipo { color: var(--blue); }
+.avf-aviso.web .avf-tipo, .avf-aviso.robot .avf-tipo, .avf-aviso.mibo .avf-tipo { color: var(--red); }
+.avf-aviso.ideas .avf-tipo, .avf-aviso.borradores .avf-tipo { color: var(--purple); }
+.avf-aviso.hecho, .avf-aviso.descartado { opacity: 0.6; }
+.avf-cuerpo { display: grid; gap: 10px; padding: 0 14px 14px; }
+.avf-cuerpo pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; }
+.avf-cuerpo blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border-lit); color: var(--secondary); font-size: 13px; line-height: 1.5; }
+.avf-cuerpo label { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--secondary); }
+.avf-cuerpo textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.5; color: var(--text); background: var(--raised); border: 1px solid var(--border-lit); border-radius: 10px; padding: 8px 10px; resize: vertical; }
+.avf-ver { justify-self: start; background: none; border: 0; color: var(--blue); cursor: pointer; font: inherit; font-size: 13px; padding: 0; }
