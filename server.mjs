@@ -187,6 +187,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 const defaultJsonParser = express.json({ limit: "2mb" });
 const mediaJsonParser = express.json({ limit: "135mb" });
+const robotJsonParser = express.json({ limit: "25mb" });
 app.use((req, res, next) => {
   const pathName = String(req.path || req.url || "").split("?")[0];
   const largeJsonRequest = req.method !== "GET" && (
@@ -198,6 +199,8 @@ app.use((req, res, next) => {
     || pathName === "/api/estadisticas/captura"
     || /^\/api\/publications\/posts\/[^/]+\/media$/.test(pathName)
   );
+  // El robot del Mac no tiene sesión: entra con su propia clave (se comprueba en estadisticas.mjs).
+  if (req.method === "POST" && pathName === "/api/estadisticas/robot") return robotJsonParser(req, res, next);
   if (largeJsonRequest && !validSession(req)) {
     return res.status(401).json({ error: "No autorizado" });
   }

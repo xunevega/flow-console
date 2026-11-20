@@ -1029,6 +1029,54 @@ export function montarEstadisticas(app, dependencias) {
     res.json({ ok: true });
   });
 
+  // Robot del Mac (robot-redes/): Roberto inicia sesión en su Chrome y el robot manda aquí
+  // el Excel de LinkedIn o capturas de Instagram. Entra con ESTADISTICAS_ROBOT_TOKEN, no con la sesión.
+  const robotAutorizado = (req) => {
+    const esperado = String(process.env.ESTADISTICAS_ROBOT_TOKEN || "");
+    const recibido = String(req.get("x-robot-token") || "");
+    if (esperado.length < 24 || recibido.length !== esperado.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(esperado));
+  };
+
+  app.post("/api/estadisticas/robot", async (req, res) => {
+    if (!robotAutorizado(req)) return res.status(401).json({ error: "No autorizado" });
+    try {
+      const tipo = String(req.body?.tipo || "");
+      if (tipo === "linkedin-excel") {
+        const datos = String(req.body?.archivo || "").replace(/^data:[^;]+;base64,/, "");
+        const resultado = await guardarLinkedin(importarLinkedin(Buffer.from(datos, "base64")));
+        return res.json({ ok: true, ...resultado });
+      }
+      if (tipo === "instagram-captura" || tipo === "instagram-cuenta") {
+        const leido = await leerCapturaInstagram(req.body?.imagen, "image/png");
+        const entradas = await leerManual();
+        const url = String(req.body?.url || "").slice(0, 500);
+        const cuenta = tipo === "instagram-cuenta";
+        const mes = String(req.body?.fecha || isoDia(new Date())).slice(0, 7);
+        const i = cuenta
+          ? entradas.findIndex((e) => e.canal === "Instagram" && e.tipo === "mes" && e.origen === "robot" && e.fecha.startsWith(mes))
+          : entradas.findIndex((e) => e.canal === "Instagram" && url && e.url === url);
+        const entrada = limpiarEntrada({
+          canal: "Instagram",
+          tipo: cuenta ? "mes" : "publicacion",
+          fecha: cuenta ? `${mes}-01` : (req.body?.fecha || leido.fecha),
+          titulo: cuenta ? `Instagram ${mes}` : (req.body?.titulo || leido.titulo),
+          url,
+          metricas: leido.metricas,
+          origen: "robot",
+        }, i >= 0 ? entradas[i] : {});
+        if (!Object.keys(entrada.metricas).length) return res.json({ ok: true, guardado: false, motivo: "La captura no tenía números." });
+        if (i >= 0) entradas[i] = entrada; else entradas.push(entrada);
+        await guardarJson(archivos.manual, { entradas });
+        cache.clear();
+        return res.json({ ok: true, guardado: true, metricas: entrada.metricas });
+      }
+      res.status(400).json({ error: "Tipo desconocido" });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.post("/api/estadisticas/linkedin", requireAuth, async (req, res) => {
     try {
       const datos = String(req.body?.archivo || "").replace(/^data:[^;]+;base64,/, "");
