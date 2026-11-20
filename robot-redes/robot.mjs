@@ -188,34 +188,54 @@ async function linkedin(p) {
   const resumen = await aFlow({ tipo: "linkedin-resumen", imagen: await p.captura() });
   log(`LinkedIn resumen 28 días: ${resumen.guardado ? JSON.stringify(resumen.metricas) : resumen.motivo}`);
 
-  // 2) Tus publicaciones recientes, cada una con sus impresiones, pantalla a pantalla.
+  // 2) Tus publicaciones: cada una tiene «Ver análisis» (/analytics/post-summary/urn:li:activity:ID/).
+  //    El ID lleva dentro la fecha exacta de publicación.
   await p.ir("https://www.linkedin.com/in/me/recent-activity/all/");
   await pausa(4000, 6000);
-  let leidas = 0;
-  for (let i = 0; i < 6; i += 1) {
-    await quitarFranja(p);
-    try {
-      const r = await aFlow({ tipo: "linkedin-publicaciones", imagen: await p.captura() });
-      leidas += r.leidas || 0;
-      log(`  pantalla ${i + 1}: ${r.leidas} publicaciones leídas`);
-    } catch (e) {
-      log(`  pantalla ${i + 1}: ${e.message}`);
-    }
-    await franja(p, `Flow · Leyendo tus publicaciones de LinkedIn (${i + 1} de 6)…`);
-    // LinkedIn desplaza dentro de un recuadro, no la página: se busca el que más contenido tiene.
-    const fin = await p.evaluar(`
+  let enlaces = [];
+  for (let i = 0; i < 5; i += 1) {
+    const nuevos = await p.evaluar(`return [...document.querySelectorAll("a[href*='/analytics/post-summary/urn:li:activity:']")].map((a) => {
+      const id = (a.getAttribute("href").match(/activity:(\\d+)/) || [])[1];
+      const caja = a.closest("li, article, [data-view-name], div[class*='update']") || a.parentElement;
+      return { id, texto: (caja?.innerText || "").replace(/\\s+/g, " ").slice(0, 400) };
+    }).filter((x) => x.id);`);
+    for (const n of nuevos) if (!enlaces.some((e) => e.id === n.id)) enlaces.push(n);
+    await p.evaluar(`
       const cajas = [document.scrollingElement, ...document.querySelectorAll("*")].filter((e) => e && e.scrollHeight - e.clientHeight > 200
         && (e === document.scrollingElement || /(auto|scroll)/.test(getComputedStyle(e).overflowY)));
       const caja = cajas.sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0];
-      if (!caja) return true;
-      const antes = caja.scrollTop;
-      caja.scrollBy(0, caja.clientHeight * 0.8);
-      await new Promise((r) => setTimeout(r, 2500));
-      return Math.abs(caja.scrollTop - antes) < 5;`);
-    if (fin) break;
-    await pausa(1500, 3000);
+      caja?.scrollBy(0, caja.clientHeight * 0.9);
+      await new Promise((r) => setTimeout(r, 2500));`);
+    await pausa(1000, 2000);
   }
-  return `LinkedIn: resumen y ${leidas} lecturas de publicaciones`;
+  const fechaDeId = (id) => new Date(Number(BigInt(id) >> 22n)).toISOString().slice(0, 10);
+  enlaces = enlaces
+    .map((e) => ({ ...e, fecha: fechaDeId(e.id) }))
+    .filter((e) => Date.now() - Date.parse(e.fecha) < 365 * 864e5)
+    .slice(0, 15);
+  log(`LinkedIn: ${enlaces.length} publicaciones del último año.`);
+  let leidas = 0;
+  for (const [i, e] of enlaces.entries()) {
+    const url = `https://www.linkedin.com/feed/update/urn:li:activity:${e.id}/`;
+    await p.ir(`https://www.linkedin.com/analytics/post-summary/urn:li:activity:${e.id}/`);
+    await franja(p, `Flow · Leyendo LinkedIn (${i + 1} de ${enlaces.length})…`);
+    await pausa(4000, 6000);
+    await quitarFranja(p);
+    // Título: el texto de la publicación, quitando la cabecera (nombre, cargo, «4 meses •»).
+    const titulo = (e.texto.split(/•\s*(?:Tú|You)?\s*/).pop() || e.texto)
+      .replace(/^.*?\d+\s*(?:min|h|d|sem|mes(?:es)?|año(?:s)?)\s*•\s*/i, "")
+      .replace(/\s*\d[\d.,]*\s*impresiones.*$/i, "")
+      .trim().slice(0, 120);
+    try {
+      const r = await aFlow({ tipo: "linkedin-publicacion", imagen: await p.captura(), url, fecha: e.fecha, titulo });
+      if (r.guardado) leidas += 1;
+      log(`  ${e.fecha} ${titulo.slice(0, 40)} → ${r.guardado ? JSON.stringify(r.metricas) : r.motivo}`);
+    } catch (err) {
+      log(`  ${e.fecha} no se pudo leer: ${err.message}`);
+    }
+    await pausa(2000, 4000);
+  }
+  return `LinkedIn: resumen y ${leidas} publicaciones`;
 }
 
 // ───────────────────────── Instagram ─────────────────────────

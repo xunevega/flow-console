@@ -1122,20 +1122,21 @@ export function montarEstadisticas(app, dependencias) {
         cache.clear();
         return res.json({ ok: true, leidas: lista.length, nuevas });
       }
-      if (tipo === "instagram-captura" || tipo === "instagram-cuenta") {
+      if (tipo === "instagram-captura" || tipo === "instagram-cuenta" || tipo === "linkedin-publicacion") {
+        const canal = tipo.startsWith("linkedin") ? "LinkedIn" : "Instagram";
         const leido = await leerCapturaInstagram(req.body?.imagen, "image/png");
         const entradas = await leerManual();
         const url = String(req.body?.url || "").slice(0, 500);
         const cuenta = tipo === "instagram-cuenta";
         const mes = String(req.body?.fecha || isoDia(new Date())).slice(0, 7);
         const i = cuenta
-          ? entradas.findIndex((e) => e.canal === "Instagram" && e.tipo === "mes" && e.origen === "robot" && e.fecha.startsWith(mes))
-          : entradas.findIndex((e) => e.canal === "Instagram" && url && e.url === url);
+          ? entradas.findIndex((e) => e.canal === canal && e.tipo === "mes" && e.origen === "robot" && e.fecha.startsWith(mes))
+          : entradas.findIndex((e) => e.canal === canal && url && e.url === url);
         const entrada = limpiarEntrada({
-          canal: "Instagram",
+          canal,
           tipo: cuenta ? "mes" : "publicacion",
           fecha: cuenta ? `${mes}-01` : (req.body?.fecha || leido.fecha),
-          titulo: cuenta ? `Instagram ${mes}` : (req.body?.titulo || leido.titulo),
+          titulo: cuenta ? `${canal} ${mes}` : (req.body?.titulo || leido.titulo),
           url,
           metricas: leido.metricas,
           origen: "robot",
