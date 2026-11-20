@@ -247,13 +247,13 @@ export async function proponerIdeas() {
     messages: [
       {
         role: "system",
-        content: "Eres el responsable de visibilidad de Æternal Flow, un estudio pequeño de Roberto Díaz (España). Propones artículos para su blog que una persona real buscaría en Google o preguntaría a un asistente de IA, y que llevan de forma natural a uno de sus productos. Nada de temas de opinión ni de tendencias: búsquedas prácticas (cómo hacer X, qué es X, X frente a Y, errores al hacer X). Escribes en español de España. Respondes solo JSON.",
+        content: "Eres el responsable de visibilidad de Æternal Flow, un estudio pequeño de Roberto Díaz (España). Propones artículos para su blog de dos tipos. «producto»: búsquedas prácticas que una persona real haría en Google o a un asistente de IA (cómo hacer X, qué es X, X frente a Y, errores al hacer X) y que llevan de forma natural a uno de sus productos o proyectos. «libre»: temas que no tienen que ver con lo suyo, sobre cualquier cosa que le pueda interesar escribir y a otros leer: ideas, curiosidades, cultura, tecnología, trabajo, historia, cómo funciona algo… en la línea de sus ensayos (pensamiento crítico, internet, el mercado laboral, la especialización), sin vender nada. Escribes en español de España. Respondes solo JSON.",
       },
       {
         role: "user",
         content: JSON.stringify({
-          tarea: "Propón 3 artículos nuevos. No repitas temas que ya están en el blog. Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa también lo que Roberto lleva entre manos: un avance real de un proyecto (qué se ha hecho, qué problema se resolvió) puede ser un buen artículo si alguien buscaría ese problema.",
-          formato: { ideas: [{ titulo: "título del artículo, con la búsqueda dentro", busqueda: "lo que la persona teclearía", producto: "id de la ficha", proyecto_mibo: "nombre exacto del proyecto de MiBØ relacionado, o vacío", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
+          tarea: "Propón 6 artículos nuevos: 4 de tipo «producto» y 2 de tipo «libre» (variados entre sí, no siempre sobre él ni sobre software). No repitas temas que ya están en el blog. Para los de tipo «producto»: Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa también lo que Roberto lleva entre manos: un avance real de un proyecto (qué se ha hecho, qué problema se resolvió) puede ser un buen artículo si alguien buscaría ese problema.",
+          formato: { ideas: [{ tipo: "producto o libre", titulo: "título del artículo (en los de producto, con la búsqueda dentro)", busqueda: "lo que la persona teclearía, o vacío en los libres", producto: "id de la ficha, o vacío en los libres", proyecto_mibo: "nombre exacto del proyecto de MiBØ relacionado, o vacío", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
           en_marcha_segun_mibo: enMarcha || "MiBØ todavía no ha mandado nada.",
           proyectos_mibo: proyectosMibo,
           fichas: datos.fichas.map(({ id, nombre, para, hechos }) => ({ id, nombre, para, hechos })),
@@ -265,9 +265,10 @@ export async function proponerIdeas() {
   });
   const lista = (jsonDelModelo(respuesta.text).ideas || [])
     .filter((i) => i && i.titulo)
-    .slice(0, 5)
+    .slice(0, 8)
     .map((i) => ({
       id: crypto.randomUUID(),
+      tipo: i.tipo === "libre" ? "libre" : "producto",
       titulo: texto(i.titulo, 160),
       busqueda: texto(i.busqueda, 160),
       producto: datos.fichas.some((f) => f.id === i.producto) ? i.producto : "",
@@ -285,12 +286,12 @@ export async function proponerIdeas() {
 
 // ───────────────────────── 2. borrador ─────────────────────────
 
-export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "", proyectoMibo = "" }) {
+export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "", proyectoMibo = "", tipo = "" }) {
   const datos = await leer();
   const ficha = datos.fichas.find((f) => f.id === producto) || null;
   const [voz, enMarcha] = await Promise.all([
     instruccionVoz(),
-    resumenParaEscribir({ proyecto: proyectoMibo || ficha?.nombre || "" }).then((r) => r || (proyectoMibo ? "" : resumenParaEscribir({ maxProyectos: 6 }))),
+    tipo === "libre" && !proyectoMibo ? "" : resumenParaEscribir({ proyecto: proyectoMibo || ficha?.nombre || "" }).then((r) => r || (proyectoMibo ? "" : resumenParaEscribir({ maxProyectos: 6 }))),
   ]);
   const imagenes = (await imagenesMibo({ proyecto: proyectoMibo, max: 8 })).map((i) => i.id);
   const respuesta = await d.openaiChat({
@@ -304,7 +305,9 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
         content: [
           "Escribes artículos para el blog de Æternal Flow (aeternal-flow.es), el estudio de Roberto Díaz.",
           "Voz: primera persona de Roberto, cercana y directa, frases cortas, algo de ironía, cero relleno, nada de «en el mundo actual» ni de vender humo.",
-          "El artículo resuelve de verdad la búsqueda aunque el lector no compre nada. El producto aparece al final, en una sección corta, contando lo que hace y lo que NO hace.",
+          ficha
+            ? "El artículo resuelve de verdad la búsqueda aunque el lector no compre nada. El producto aparece al final, en una sección corta, contando lo que hace y lo que NO hace."
+            : "Es un tema libre: no menciones ni vendas ningún producto ni proyecto de Æternal Flow salvo que el tema trate de eso. Que se sostenga solo: una idea clara, ejemplos concretos y una conclusión con opinión propia.",
           "REGLA DURA: del producto solo puedes afirmar lo que está en «hechos». Si algo no está ahí, no lo digas. No inventes cifras, clientes, premios ni fechas.",
           "Sobre leyes, impuestos o normas: solo lo general y seguro; si dependes de un detalle, di que hay que comprobarlo con la fuente oficial.",
           "Formato: Markdown. Sin título # (va aparte). Secciones con ##. Entre 600 y 1.000 palabras.",
@@ -491,7 +494,7 @@ export function montarVisibilidad(app, dependencias) {
   app.post("/api/visibilidad/borradores", requireAuth, responder(async (req) => {
     const titulo = texto(req.body?.titulo, 160);
     if (!titulo) throw new Error("Falta el tema del artículo.");
-    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, proyectoMibo: texto(req.body?.proyectoMibo, 120) });
+    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, proyectoMibo: texto(req.body?.proyectoMibo, 120), tipo: req.body?.tipo === "libre" ? "libre" : "" });
   }));
 
   app.patch("/api/visibilidad/borradores/:id", requireAuth, responder(async (req) => {

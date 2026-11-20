@@ -299,7 +299,8 @@ export default function Visibilidad({ api }) {
               {!ideas.lista?.length && <p className="est-vacio">Todavía no hay ideas. Pulsa «Buscar ideas nuevas» (Flow también lo hace solo una vez por semana).</p>}
               <div className="vis-ideas">
                 {(ideas.lista || []).map((idea) => (
-                  <article key={idea.id}>
+                  <article key={idea.id} className={idea.tipo === "libre" ? "libre" : ""}>
+                    {idea.tipo === "libre" && <span className="vis-etiqueta">Tema libre</span>}
                     <b>{idea.titulo}</b>
                     <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}{idea.proyectoMibo ? ` · ${idea.proyectoMibo}` : ""}</small>
                     <p>{idea.porque}</p>

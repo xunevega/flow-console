@@ -7615,3 +7615,5 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .vis-imagenes.elegir button { padding: 0; border: 2px solid transparent; border-radius: 12px; background: none; cursor: pointer; }
 .vis-imagenes.elegir button.elegida { border-color: var(--blue); }
 .vis-sin-imagen { min-height: 90px; color: var(--secondary); font: inherit; font-size: 12px; }
+.vis-ideas article.libre { background: var(--raised); border-style: dashed; }
+.vis-etiqueta { justify-self: start; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--purple); }
