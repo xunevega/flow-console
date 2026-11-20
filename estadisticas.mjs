@@ -798,6 +798,7 @@ async function leerCapturaInstagram(imagenBase64, tipoImagen) {
 {"canal":"Instagram"|"LinkedIn","tipo":"publicacion"|"mes","fecha":"YYYY-MM-DD o vacío","titulo":"primeras palabras del texto de la publicación o vacío",
 "metricas":{"alcance":n,"impresiones":n,"visualizaciones":n,"me_gusta":n,"comentarios":n,"compartidos":n,"guardados":n,"interacciones":n,"clics":n,"visitas_perfil":n,"seguidores":n}}
 "tipo":"mes" si la captura es un resumen de un periodo (últimos 30 días, etc.) y no de una publicación concreta.
+Usa la etiqueta que se ve: "Impresiones"/"Visualizaciones" → impresiones o visualizaciones; "Cuentas alcanzadas"/"Miembros alcanzados"/"Alcance" → alcance; "Reacciones"/"Me gusta" → me_gusta; "Nuevos seguidores"/"Seguidores" → seguidores. Si hay varios números, devuélvelos todos.
 Convierte "1,2 mil" o "1.2K" a 1200. Hoy es ${isoDia(new Date())}.`,
           },
           { type: "image_url", image_url: { url: `data:${tipoImagen || "image/png"};base64,${datos}` } },

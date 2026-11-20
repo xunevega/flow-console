@@ -202,7 +202,16 @@ async function linkedin(p) {
       log(`  pantalla ${i + 1}: ${e.message}`);
     }
     await franja(p, `Flow · Leyendo tus publicaciones de LinkedIn (${i + 1} de 6)…`);
-    const fin = await p.evaluar("const antes = scrollY; scrollBy(0, innerHeight * 0.8); await new Promise((r) => setTimeout(r, 2500)); return scrollY === antes;");
+    // LinkedIn desplaza dentro de un recuadro, no la página: se busca el que más contenido tiene.
+    const fin = await p.evaluar(`
+      const cajas = [document.scrollingElement, ...document.querySelectorAll("*")].filter((e) => e && e.scrollHeight - e.clientHeight > 200
+        && (e === document.scrollingElement || /(auto|scroll)/.test(getComputedStyle(e).overflowY)));
+      const caja = cajas.sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0];
+      if (!caja) return true;
+      const antes = caja.scrollTop;
+      caja.scrollBy(0, caja.clientHeight * 0.8);
+      await new Promise((r) => setTimeout(r, 2500));
+      return Math.abs(caja.scrollTop - antes) < 5;`);
     if (fin) break;
     await pausa(1500, 3000);
   }
