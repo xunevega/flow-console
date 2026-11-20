@@ -11,6 +11,8 @@ export default function MiVoz({ api }) {
   const [reglas, setReglas] = useState("");
   const [ejemplo, setEjemplo] = useState("");
   const [donde, setDonde] = useState("");
+  const [url, setUrl] = useState("");
+  const [leyendo, setLeyendo] = useState(false);
   const [leccion, setLeccion] = useState("");
   const [proyecto, setProyecto] = useState("");
   const [mensaje, setMensaje] = useState({ texto: "", error: false });
@@ -87,11 +89,22 @@ export default function MiVoz({ api }) {
                   setDonde("");
                 }, "Ejemplo añadido.")}>Añadir ejemplo</button>
               </div>
+              <div className="vis-tema">
+                <input placeholder="…o la dirección de un texto tuyo (artículo del blog, post público…)" value={url} onChange={(e) => setUrl(e.target.value)} />
+                <button type="button" className="button" disabled={!/^https?:\/\/\S+\.\S+/.test(url.trim()) || leyendo} onClick={async () => {
+                  setLeyendo(true);
+                  await hacer(async () => {
+                    await api("/mivoz/ejemplos", { method: "POST", body: JSON.stringify({ url: url.trim(), donde }) });
+                    setUrl("");
+                  }, "Texto leído y añadido.");
+                  setLeyendo(false);
+                }}>{leyendo ? "Leyendo…" : "Leer y añadir"}</button>
+              </div>
               <div className="vis-lista">
                 {voz.ejemplos.map((e) => (
                   <article key={e.id}>
                     <p>{e.texto.length > 320 ? `${e.texto.slice(0, 320)}…` : e.texto}</p>
-                    <small>{e.donde || "sin origen"} · {fecha(e.fecha)}</small>
+                    <small>{e.url ? <a href={e.url} target="_blank" rel="noreferrer">{e.donde || "enlace"}</a> : (e.donde || "sin origen")} · {fecha(e.fecha)}</small>
                     <button type="button" className="button ghost" onClick={() => hacer(() => api(`/mivoz/ejemplos/${e.id}`, { method: "DELETE" }))}>Quitar</button>
                   </article>
                 ))}

@@ -95,6 +95,61 @@ export async function aprenderDeCorreccion({ antes, despues, donde = "" }) {
   return añadidas;
 }
 
+// Texto principal de una página (artículo, post público…): <article>, si no <main>, si no el cuerpo.
+export function textoDeHtml(html) {
+  const sin = String(html || "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|nav|header|footer|form|aside)\b[\s\S]*?<\/\1>/gi, " ");
+  const trozo = (etiqueta) => sin.match(new RegExp(`<${etiqueta}\\b[^>]*>([\\s\\S]*?)<\\/${etiqueta}>`, "i"))?.[1] || "";
+  const base = trozo("article") || trozo("main") || trozo("body") || sin;
+  const entidades = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", laquo: "«", raquo: "»", hellip: "…", mdash: "—", ndash: "–" };
+  return base
+    .replace(/<\/(p|div|h[1-6]|li|blockquote|section)>|<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&([a-zA-Z])(acute|grave|uml|circ|tilde);/g, (m, l, t) => `${l}${{ acute: "\u0301", grave: "\u0300", uml: "\u0308", circ: "\u0302", tilde: "\u0303" }[t]}`.normalize("NFC"))
+    .replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e) => (e[0] === "#" ? String.fromCodePoint(e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : entidades[e.toLowerCase()] ?? m))
+    .split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n\n")
+    .trim();
+}
+
+async function textoDeUrl(url) {
+  let u;
+  try {
+    u = new URL(String(url || "").trim());
+  } catch {
+    throw new Error("Esa dirección no es válida.");
+  }
+  if (!/^https?:$/.test(u.protocol) || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[|169\.254\.)/i.test(u.hostname)) {
+    throw new Error("Solo direcciones públicas (http o https).");
+  }
+  const r = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0 (Flow Console)", "Accept-Language": "es-ES,es" }, redirect: "follow", signal: AbortSignal.timeout(20000) });
+  if (!r.ok) throw new Error(`La página respondió ${r.status}.`);
+  const tipo = r.headers.get("content-type") || "";
+  const cuerpo = await r.text();
+  const t = /html/i.test(tipo) ? textoDeHtml(cuerpo) : cuerpo.trim();
+  if (t.length < 80) throw new Error("No he podido leer el texto de esa página (puede que pida iniciar sesión). Pégalo a mano.");
+  return { texto: t.slice(0, 6000), donde: u.hostname.replace(/^www\./, "") };
+}
+
+async function anadirEjemplo({ texto: t, donde = "", url = "" }) {
+  const ej = texto(t, 6000);
+  if (ej.length < 80) throw new Error("Pega un texto un poco más largo (al menos un par de frases).");
+  const v = await leerVoz();
+  if (v.ejemplos.some((e) => (url && e.url === url) || e.texto === ej)) throw new Error("Ese texto ya está entre tus ejemplos.");
+  v.ejemplos = [{ id: crypto.randomUUID(), texto: ej, donde: texto(donde, 80), url: texto(url, 500), fecha: new Date().toISOString() }, ...v.ejemplos].slice(0, MAX_EJEMPLOS);
+  await guardarVoz(v);
+  return v;
+}
+
+function robotAutorizado(req) {
+  const esperada = String(process.env.ESTADISTICAS_ROBOT_TOKEN || "").trim();
+  const llega = String(req.get("X-Robot-Token") || "").trim();
+  if (!esperada || !llega) return false;
+  const a = Buffer.from(esperada);
+  const b = Buffer.from(llega);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export function montarMiVoz(app, dependencias) {
   d = dependencias;
   archivo = path.join(d.dataDirectory, "mi-voz.json");
@@ -116,14 +171,27 @@ export function montarMiVoz(app, dependencias) {
     return v;
   }));
 
-  app.post("/api/mivoz/ejemplos", requireAuth, responder(async (req) => {
-    const t = texto(req.body?.texto, 6000);
-    if (t.length < 80) throw new Error("Pega un texto un poco más largo (al menos un par de frases).");
-    const v = await leerVoz();
-    v.ejemplos = [{ id: crypto.randomUUID(), texto: t, donde: texto(req.body?.donde, 80), fecha: new Date().toISOString() }, ...v.ejemplos].slice(0, MAX_EJEMPLOS);
-    await guardarVoz(v);
-    return v;
-  }));
+  // Un ejemplo pegado o, si llega una dirección, el texto de esa página.
+  const nuevoEjemplo = async (body) => {
+    const url = texto(body?.url, 500);
+    if (url && !texto(body?.texto, 10)) {
+      const leido = await textoDeUrl(url);
+      return anadirEjemplo({ texto: leido.texto, donde: texto(body?.donde, 80) || leido.donde, url });
+    }
+    return anadirEjemplo({ texto: body?.texto, donde: body?.donde, url });
+  };
+
+  app.post("/api/mivoz/ejemplos", requireAuth, responder((req) => nuevoEjemplo(req.body)));
+
+  // El robot del Mac (con su clave) puede traer textos de LinkedIn que Roberto ha elegido.
+  app.post("/api/mivoz/robot", async (req, res) => {
+    if (!robotAutorizado(req)) return res.status(401).json({ error: "No autorizado" });
+    try {
+      res.json(await nuevoEjemplo(req.body));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
   app.delete("/api/mivoz/ejemplos/:id", requireAuth, responder(async (req) => {
     const v = await leerVoz();

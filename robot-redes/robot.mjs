@@ -19,6 +19,9 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const FLOW = process.env.FLOW_URL || "https://flow-console-production.up.railway.app";
 const TOKEN = fs.readFileSync(path.join(DIR, ".robot-token"), "utf8").trim();
 const SOLO = (process.argv.find((a) => a.startsWith("--solo=")) || "").split("=")[1] || "";
+// --textos: no mide nada; guarda el texto de tus publicaciones de LinkedIn en textos-linkedin.json
+// para elegir cuáles van a MI VOZ como ejemplos de cómo escribes.
+const TEXTOS = process.argv.includes("--textos");
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PUERTO = 9333;
 const ESPERA_LOGIN_MS = 15 * 60 * 1000;
@@ -165,6 +168,54 @@ async function esperarSesion(p, red, dentro) {
     await pausa(3000);
   }
   return false;
+}
+
+// ───────────────────────── LinkedIn: textos para MI VOZ ─────────────────────────
+
+async function textosLinkedin(p) {
+  await p.ir("https://www.linkedin.com/in/me/recent-activity/all/");
+  const dentro = () => p.hay("a[href*='/feed/']");
+  if (!(await dentro()) && !(await esperarSesion(p, "LinkedIn", dentro))) throw new Error("no se inició sesión");
+  if (!/recent-activity/.test(await p.url())) await p.ir("https://www.linkedin.com/in/me/recent-activity/all/");
+  await franja(p, "Flow · Leyendo tus publicaciones de LinkedIn para MI VOZ…");
+  const vistos = new Map();
+  for (let vuelta = 0; vuelta < 8; vuelta += 1) {
+    // LinkedIn (11/2026): el texto va en [data-testid=expandable-text-box] y «… más» en expandable-text-button;
+    // cada publicación propia lleva un enlace a su análisis con el ID de actividad.
+    const lote = await p.evaluar(`
+      for (const b of document.querySelectorAll("[data-testid='expandable-text-button']")) {
+        if (/más|more/i.test(b.innerText || "")) b.click();
+      }
+      await new Promise((r) => setTimeout(r, 700));
+      return [...document.querySelectorAll("[data-testid='expandable-text-box']")].map((caja) => {
+        let el = caja.parentElement;
+        let enlace = null;
+        while (el && el !== document.body && !enlace) {
+          enlace = el.querySelector("a[href*='urn:li:activity:']");
+          if (enlace && el.querySelectorAll("[data-testid='expandable-text-box']").length > 1) enlace = null;
+          el = el.parentElement;
+        }
+        const urn = (enlace?.getAttribute("href") || "").match(/urn:li:activity:\\d+/)?.[0] || "";
+        return { urn, texto: (caja.innerText || "").replace(/…\\s*(más|more)\\s*$/i, "").trim() };
+      });`);
+    for (const x of lote || []) if (x.urn && x.texto && !vistos.has(x.urn)) vistos.set(x.urn, x);
+    await p.evaluar(`
+      const caja = [...document.querySelectorAll("main, .scaffold-finite-scroll, body")].find((e) => e.scrollHeight > e.clientHeight + 200) || document.scrollingElement;
+      caja.scrollBy(0, 2600); window.scrollBy(0, 2600);
+      return true;`);
+    await pausa(1800, 2600);
+  }
+  const textos = [...vistos.values()].map((x) => {
+    const id = x.urn.split(":").pop();
+    return {
+      url: `https://www.linkedin.com/feed/update/${x.urn}/`,
+      fecha: new Date(Number(BigInt(id) >> 22n)).toISOString().slice(0, 10),
+      texto: x.texto,
+      palabras: x.texto.split(/\s+/).length,
+    };
+  }).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  fs.writeFileSync(path.join(DIR, "textos-linkedin.json"), JSON.stringify(textos, null, 2), { mode: 0o600 });
+  return `LinkedIn: ${textos.length} textos guardados en textos-linkedin.json`;
 }
 
 // ───────────────────────── LinkedIn ─────────────────────────
@@ -328,7 +379,7 @@ await cdp.listo;
 await cdp.enviar("Page.enable");
 const p = pagina(cdp);
 const resumen = [];
-for (const [nombre, fn] of [["linkedin", linkedin], ["instagram", instagram]]) {
+for (const [nombre, fn] of TEXTOS ? [["linkedin", textosLinkedin]] : [["linkedin", linkedin], ["instagram", instagram]]) {
   if (SOLO && SOLO !== nombre) continue;
   try {
     resumen.push(await fn(p));
