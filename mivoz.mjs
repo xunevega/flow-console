@@ -41,6 +41,14 @@ async function guardarVoz(v) {
   await fs.rename(tmp, archivo);
 }
 
+// Lo que importa de un ejemplo es cómo escribe: se salta la cabecera (fecha, «20 min», título)
+// empezando en el primer párrafo de verdad.
+export function cuerpoDeEjemplo(t, max = 1500) {
+  const parrafos = String(t || "").split(/\n+/);
+  const i = parrafos.findIndex((x) => x.trim().length >= 120);
+  return parrafos.slice(Math.max(0, i)).join("\n").slice(0, max);
+}
+
 // Lo que se añade a las instrucciones de cualquier texto. Vacío si no hay nada todavía.
 export async function instruccionVoz({ maxEjemplos = 4 } = {}) {
   const v = await leerVoz();
@@ -48,10 +56,11 @@ export async function instruccionVoz({ maxEjemplos = 4 } = {}) {
   if (v.reglas.trim()) partes.push(`Reglas de Roberto (obligatorias):\n${v.reglas.trim()}`);
   const lecciones = v.lecciones.filter((l) => l.activa !== false).slice(0, 25);
   if (lecciones.length) partes.push(`Lo aprendido de sus correcciones (obligatorio):\n${lecciones.map((l) => `- ${l.texto}`).join("\n")}`);
-  const ejemplos = v.ejemplos.slice(0, maxEjemplos);
+  // Si hay más ejemplos que sitio, se eligen al azar en cada texto: así todos acaban contando.
+  const ejemplos = [...v.ejemplos].sort(() => Math.random() - 0.5).slice(0, maxEjemplos);
   if (ejemplos.length) {
     partes.push(`Textos suyos que le gustan. Imita el tono, el ritmo y el vocabulario, no el contenido:\n${ejemplos
-      .map((e, i) => `--- Ejemplo ${i + 1}${e.donde ? ` (${e.donde})` : ""} ---\n${e.texto.slice(0, 1500)}`).join("\n")}`);
+      .map((e, i) => `--- Ejemplo ${i + 1}${e.donde ? ` (${e.donde})` : ""} ---\n${cuerpoDeEjemplo(e.texto)}`).join("\n")}`);
   }
   return partes.length ? `ESCRIBE COMO ROBERTO.\n${partes.join("\n\n")}` : "";
 }
