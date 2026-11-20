@@ -181,11 +181,31 @@ async function linkedin(p) {
     await pausa(2000);
     await p.ir(analiticas);
   }
-  // 1) Resumen de los últimos 28 días (LinkedIn ya no deja exportar el Excel).
+  // 1) Resumen de los últimos 28 días, leído del texto de la página («38 | Impresiones»).
   await franja(p, "Flow · Leyendo tus estadísticas de LinkedIn…");
   await pausa(5000, 7000);
+  await p.evaluar("scrollBy(0, 3000); await new Promise((r) => setTimeout(r, 2500)); scrollTo(0, 0);").catch(() => {});
+  const lineas = await p.evaluar(`return ((document.querySelector("main") || document.body).innerText || "").split("\\n").map((l) => l.trim()).filter(Boolean);`);
+  const ETIQUETAS = [
+    [/^impresiones$/i, "impresiones"],
+    [/^miembros alcanzados$/i, "alcance"],
+    [/^reacciones$/i, "me_gusta"],
+    [/^comentarios$/i, "comentarios"],
+    [/^(veces compartido|republicaciones|contenido compartido)$/i, "compartidos"],
+    [/^guardados$/i, "guardados"],
+    [/^(nuevos seguidores|seguidores)$/i, "seguidores"],
+    [/^(visualizaciones del perfil|visitas al perfil)$/i, "visitas_perfil"],
+  ];
+  const metricas = {};
+  lineas.forEach((l, i) => {
+    const anterior = (lineas[i - 1] || "").replace(/\./g, "");
+    if (!/^\d+$/.test(anterior)) return;
+    for (const [re, clave] of ETIQUETAS) if (re.test(l) && metricas[clave] === undefined) metricas[clave] = Number(anterior);
+  });
   await quitarFranja(p);
-  const resumen = await aFlow({ tipo: "linkedin-resumen", imagen: await p.captura() });
+  const resumen = Object.keys(metricas).length
+    ? await aFlow({ tipo: "linkedin-resumen", metricas })
+    : await aFlow({ tipo: "linkedin-resumen", imagen: await p.captura() });
   log(`LinkedIn resumen 28 días: ${resumen.guardado ? JSON.stringify(resumen.metricas) : resumen.motivo}`);
 
   // 2) Tus publicaciones: cada una tiene «Ver análisis» (/analytics/post-summary/urn:li:activity:ID/).

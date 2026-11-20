@@ -1094,7 +1094,10 @@ export function montarEstadisticas(app, dependencias) {
         return res.json({ ok: true, ...resultado });
       }
       if (tipo === "linkedin-resumen") {
-        const leido = await leerCapturaInstagram(req.body?.imagen, "image/png");
+        // El robot manda los números ya leídos del texto; si no, una captura.
+        const leido = req.body?.metricas && typeof req.body.metricas === "object"
+          ? { metricas: req.body.metricas }
+          : await leerCapturaInstagram(req.body?.imagen, "image/png");
         const entradas = await leerManual();
         const mes = isoDia(new Date()).slice(0, 7);
         const i = entradas.findIndex((e) => e.canal === "LinkedIn" && e.tipo === "mes" && e.origen === "robot" && e.fecha.startsWith(mes));
