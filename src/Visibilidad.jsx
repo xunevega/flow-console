@@ -63,14 +63,15 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const [titulo, setTitulo] = useState(b.titulo);
   const [descripcion, setDescripcion] = useState(b.descripcion);
   const [cuerpo, setCuerpo] = useState(b.cuerpo);
+  const [imagen, setImagen] = useState(b.imagen || "");
   const [ocupado, setOcupado] = useState("");
-  const cambiado = titulo !== b.titulo || descripcion !== b.descripcion || cuerpo !== b.cuerpo;
+  const cambiado = titulo !== b.titulo || descripcion !== b.descripcion || cuerpo !== b.cuerpo || imagen !== (b.imagen || "");
   const ficha = fichas.find((f) => f.id === b.producto);
 
   const guardar = async () => {
     setOcupado("guardar");
     try {
-      await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo }) });
+      await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, imagen }) });
       await recargar();
       avisar("Guardado.");
     } catch (error) {
@@ -83,7 +84,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
     if (!window.confirm(`¿Publicar «${titulo}» en el blog de aeternal-flow.es?`)) return;
     setOcupado("publicar");
     try {
-      if (cambiado) await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo }) });
+      if (cambiado) await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, imagen }) });
       const r = await api(`/visibilidad/borradores/${b.id}/publicar`, { method: "POST" });
       await recargar();
       avisar(`Publicado: ${r.url}`);
@@ -111,6 +112,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
           <small>
             {b.estado === "publicado" ? `Publicado ${fecha(b.publicado)}` : `Borrador · ${fecha(b.actualizado)}`}
             {ficha ? ` · ${ficha.nombre}` : ""}
+            {b.proyectoMibo ? ` · MiBØ: ${b.proyectoMibo}` : ""}
             {b.busqueda ? ` · «${b.busqueda}»` : ""}
           </small>
         </div>
@@ -122,6 +124,19 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
           <label>Título<input value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={160} /></label>
           <label>Descripción para Google <small>{descripcion.length}/160</small><textarea rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} maxLength={300} /></label>
           <label>Artículo (Markdown)<textarea rows={18} value={cuerpo} onChange={(e) => setCuerpo(e.target.value)} /></label>
+          {b.imagenes?.length > 0 && (
+            <div>
+              <small>Imagen de portada (de MiBØ)</small>
+              <div className="vis-imagenes elegir">
+                <button type="button" className={`vis-sin-imagen ${!imagen ? "elegida" : ""}`} onClick={() => setImagen("")}>Sin imagen</button>
+                {b.imagenes.map((id) => (
+                  <button type="button" key={id} className={imagen === id ? "elegida" : ""} onClick={() => setImagen(id)}>
+                    <img src={`/api/mibo/imagenes/${id}`} alt="" loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="vis-acciones">
             <button type="button" className="button" onClick={publicar} disabled={Boolean(ocupado)}>{ocupado === "publicar" ? "Publicando…" : "Aprobar y publicar"}</button>
             <button type="button" className="button ghost" onClick={guardar} disabled={!cambiado || Boolean(ocupado)}>Guardar cambios</button>
@@ -137,6 +152,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
             {" · "}
             {b.aviso?.estado === "ok" ? "Bing avisado" : b.aviso?.estado === "sin_clave" ? "Aviso a Bing sin configurar" : b.aviso ? `Aviso a Bing: ${b.aviso.estado}` : ""}
           </p>
+          {b.lecciones?.length > 0 && <p className="est-pie">Aprendido de tus cambios: {b.lecciones.join(" · ")}</p>}
           {b.errorVersiones && <p className="vis-error">No se pudieron preparar las versiones: {b.errorVersiones}</p>}
           <div className="vis-versiones">
             {Object.entries(b.versiones || {}).map(([red, t]) => (
@@ -191,6 +207,7 @@ export default function Visibilidad({ api }) {
   const [mensaje, setMensaje] = useState({ texto: "", error: false });
   const [tema, setTema] = useState("");
   const [producto, setProducto] = useState("");
+  const [proyectoMibo, setProyectoMibo] = useState("");
   const [vez, setVez] = useState(0);
 
   const avisar = (texto, error = false) => setMensaje({ texto, error });
@@ -276,6 +293,7 @@ export default function Visibilidad({ api }) {
                   {fecha(ideas.fecha)} · {ideas.fuentes?.busquedas || 0} búsquedas reales
                   {ideas.fuentes?.google !== "ok" ? " · Google sin datos" : ""}
                   {ideas.fuentes?.bing !== "ok" ? " · Bing sin datos" : ""}
+                  {ideas.fuentes?.mibo ? " · con lo que cuenta MiBØ" : " · MiBØ sin datos"}
                 </p>
               )}
               {!ideas.lista?.length && <p className="est-vacio">Todavía no hay ideas. Pulsa «Buscar ideas nuevas» (Flow también lo hace solo una vez por semana).</p>}
@@ -283,7 +301,7 @@ export default function Visibilidad({ api }) {
                 {(ideas.lista || []).map((idea) => (
                   <article key={idea.id}>
                     <b>{idea.titulo}</b>
-                    <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}</small>
+                    <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}{idea.proyectoMibo ? ` · ${idea.proyectoMibo}` : ""}</small>
                     <p>{idea.porque}</p>
                     <button type="button" className="button ghost" onClick={() => escribir(idea)} disabled={Boolean(ocupado)}>
                       {ocupado === idea.id ? "Escribiendo…" : "Escribir este"}
@@ -297,7 +315,13 @@ export default function Visibilidad({ api }) {
                   <option value="">Sin producto</option>
                   {fichas.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
                 </select>
-                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim(), producto })}>
+                {datos.proyectosMibo?.length > 0 && (
+                  <select value={proyectoMibo} onChange={(e) => setProyectoMibo(e.target.value)}>
+                    <option value="">Sin proyecto de MiBØ</option>
+                    {datos.proyectosMibo.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim(), producto, proyectoMibo })}>
                   {ocupado === "tema" ? "Escribiendo…" : "Escribir"}
                 </button>
               </div>

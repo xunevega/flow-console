@@ -12,6 +12,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { instruccionVoz, aprenderDeCorreccion } from "./mivoz.mjs";
+import { resumenParaEscribir, imagenesMibo, rutaImagen, contextoMibo } from "./desde-mibo.mjs";
 
 let d = null; // dependencias que pasa server.mjs
 let archivo = "";
@@ -231,7 +233,8 @@ const seguro = (p) => p.then((v) => v, (e) => ({ estado: "error", detalle: e.mes
 
 export async function proponerIdeas() {
   const datos = await leer();
-  const [google, bing, blog] = await Promise.all([seguro(consultasGoogle()), seguro(consultasBing()), articulosDelBlog()]);
+  const [google, bing, blog, enMarcha, mibo] = await Promise.all([seguro(consultasGoogle()), seguro(consultasBing()), articulosDelBlog(), resumenParaEscribir(), contextoMibo()]);
+  const proyectosMibo = (mibo.proyectos || []).map((p) => p.nombre);
   const busquedas = [...google.filas, ...bing.filas]
     .filter((x) => x.busqueda)
     .sort((a, b) => b.impresiones - a.impresiones)
@@ -249,8 +252,10 @@ export async function proponerIdeas() {
       {
         role: "user",
         content: JSON.stringify({
-          tarea: "Propón 3 artículos nuevos. No repitas temas que ya están en el blog. Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas.",
-          formato: { ideas: [{ titulo: "título del artículo, con la búsqueda dentro", busqueda: "lo que la persona teclearía", producto: "id de la ficha", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
+          tarea: "Propón 3 artículos nuevos. No repitas temas que ya están en el blog. Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa también lo que Roberto lleva entre manos: un avance real de un proyecto (qué se ha hecho, qué problema se resolvió) puede ser un buen artículo si alguien buscaría ese problema.",
+          formato: { ideas: [{ titulo: "título del artículo, con la búsqueda dentro", busqueda: "lo que la persona teclearía", producto: "id de la ficha", proyecto_mibo: "nombre exacto del proyecto de MiBØ relacionado, o vacío", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
+          en_marcha_segun_mibo: enMarcha || "MiBØ todavía no ha mandado nada.",
+          proyectos_mibo: proyectosMibo,
           fichas: datos.fichas.map(({ id, nombre, para, hechos }) => ({ id, nombre, para, hechos })),
           busquedas_reales: busquedas,
           ya_en_el_blog: blog.map((a) => a.titulo),
@@ -266,12 +271,13 @@ export async function proponerIdeas() {
       titulo: texto(i.titulo, 160),
       busqueda: texto(i.busqueda, 160),
       producto: datos.fichas.some((f) => f.id === i.producto) ? i.producto : "",
+      proyectoMibo: proyectosMibo.includes(i.proyecto_mibo) ? i.proyecto_mibo : "",
       porque: texto(i.porque, 400),
     }));
   datos.ideas = {
     fecha: new Date().toISOString(),
     lista,
-    fuentes: { google: google.estado, bing: bing.estado, busquedas: busquedas.length, articulos: blog.length },
+    fuentes: { google: google.estado, bing: bing.estado, busquedas: busquedas.length, articulos: blog.length, mibo: Boolean(enMarcha) },
   };
   await guardar(datos);
   return datos.ideas;
@@ -279,9 +285,14 @@ export async function proponerIdeas() {
 
 // ───────────────────────── 2. borrador ─────────────────────────
 
-export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "" }) {
+export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "", proyectoMibo = "" }) {
   const datos = await leer();
   const ficha = datos.fichas.find((f) => f.id === producto) || null;
+  const [voz, enMarcha] = await Promise.all([
+    instruccionVoz(),
+    resumenParaEscribir({ proyecto: proyectoMibo || ficha?.nombre || "" }).then((r) => r || (proyectoMibo ? "" : resumenParaEscribir({ maxProyectos: 6 }))),
+  ]);
+  const imagenes = (await imagenesMibo({ proyecto: proyectoMibo, max: 8 })).map((i) => i.id);
   const respuesta = await d.openaiChat({
     model: d.openaiTextModel,
     json: true,
@@ -297,12 +308,14 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
           "REGLA DURA: del producto solo puedes afirmar lo que está en «hechos». Si algo no está ahí, no lo digas. No inventes cifras, clientes, premios ni fechas.",
           "Sobre leyes, impuestos o normas: solo lo general y seguro; si dependes de un detalle, di que hay que comprobarlo con la fuente oficial.",
           "Formato: Markdown. Sin título # (va aparte). Secciones con ##. Entre 600 y 1.000 palabras.",
+          "Si te paso lo que Roberto lleva entre manos (de MiBØ), puedes contar avances reales en primera persona, pero solo los que aparecen ahí.",
           "Responde solo JSON: {\"titulo\": \"...\", \"descripcion\": \"150-160 caracteres para Google\", \"cuerpo\": \"markdown\"}.",
-        ].join("\n"),
+          voz,
+        ].filter(Boolean).join("\n"),
       },
       {
         role: "user",
-        content: JSON.stringify({ titulo, busqueda, porque, producto: ficha, correo: "roberto@aeternal-flow.es" }),
+        content: JSON.stringify({ titulo, busqueda, porque, producto: ficha, en_marcha_segun_mibo: enMarcha || "", correo: "roberto@aeternal-flow.es" }),
       },
     ],
   });
@@ -313,8 +326,12 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
     titulo: texto(r.titulo || titulo, 160),
     descripcion: texto(r.descripcion, 300),
     cuerpo: texto(r.cuerpo, 20000),
+    original: texto(r.cuerpo, 20000),
     busqueda: texto(busqueda, 160),
     producto: ficha?.id || "",
+    proyectoMibo: texto(proyectoMibo, 120),
+    imagenes,
+    imagen: "",
     estado: "borrador",
     creado: ahora,
     actualizado: ahora,
@@ -328,7 +345,7 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
 
 // ───────────────────────── 3. publicar ─────────────────────────
 
-async function subirAlBlog(borrador, ficha) {
+async function subirAlBlog(borrador, ficha, imagenUrl = "") {
   const url = String(process.env.AETERNAL_BLOG_API_URL || `${SITIO}api/publicar.php`).trim();
   const token = String(process.env.AETERNAL_BLOG_API_TOKEN || process.env.BLOG_API_TOKEN || "").trim();
   if (!token) throw new Error("Falta AETERNAL_BLOG_API_TOKEN para publicar en el blog.");
@@ -346,7 +363,7 @@ async function subirAlBlog(borrador, ficha) {
       excerpt: borrador.descripcion || borrador.titulo,
       lede: borrador.descripcion || borrador.titulo,
       body: cuerpo,
-      image_url: "",
+      image_url: imagenUrl,
       cta_note: ficha ? `¿Te sirve ${ficha.nombre}?` : "",
       cta_text: ficha ? (ficha.demo ? `Probar ${ficha.nombre}` : `Ver ${ficha.nombre}`) : "",
       cta_href: enlace,
@@ -374,6 +391,7 @@ export async function avisarBuscadores(urls) {
 }
 
 async function versionesPorRed(borrador, url) {
+  const voz = await instruccionVoz({ maxEjemplos: 3 });
   const respuesta = await d.openaiChat({
     model: d.openaiTextModel,
     json: true,
@@ -382,7 +400,7 @@ async function versionesPorRed(borrador, url) {
     messages: [
       {
         role: "system",
-        content: "Adaptas un artículo del blog de Æternal Flow a cada red social, siguiendo al pie de la letra las reglas de cada una. Voz de Roberto: primera persona, directo, sin humo ni frases de gurú. No añadas datos que no estén en el artículo. Español de España. Responde solo JSON con una clave por red y el texto como valor.",
+        content: "Adaptas un artículo del blog de Æternal Flow a cada red social, siguiendo al pie de la letra las reglas de cada una. Voz de Roberto: primera persona, directo, sin humo ni frases de gurú. No añadas datos que no estén en el artículo. Español de España. Responde solo JSON con una clave por red y el texto como valor." + (voz ? `\n\n${voz}` : ""),
       },
       {
         role: "user",
@@ -399,16 +417,32 @@ async function versionesPorRed(borrador, url) {
     .map((k) => [k, texto(typeof r[k] === "string" ? r[k] : JSON.stringify(r[k], null, 2), 3000)]));
 }
 
-export async function publicarBorrador(id) {
+// La imagen elegida (de MiBØ) se copia a los medios públicos de Flow para que el blog la enseñe.
+async function imagenPublica(idImagen, origen) {
+  const ruta = rutaImagen(idImagen);
+  if (!ruta || !d.publicationMediaDirectory || !origen) return "";
+  const ext = path.extname(ruta);
+  const nombre = `${crypto.randomUUID()}${ext}`;
+  await fs.mkdir(d.publicationMediaDirectory, { recursive: true });
+  await fs.copyFile(ruta, path.join(d.publicationMediaDirectory, nombre));
+  return `${origen}/media/publications/${nombre}`;
+}
+
+export async function publicarBorrador(id, origen = "") {
   const datos = await leer();
   const borrador = datos.borradores.find((b) => b.id === id);
   if (!borrador) throw Object.assign(new Error("Borrador no encontrado"), { status: 404 });
   if (!borrador.cuerpo.trim()) throw new Error("El borrador está vacío.");
   const ficha = datos.fichas.find((f) => f.id === borrador.producto) || null;
-  const blog = await subirAlBlog(borrador, ficha);
+  const imagenUrl = borrador.imagen ? await imagenPublica(borrador.imagen, origen).catch(() => "") : "";
+  const blog = await subirAlBlog(borrador, ficha, imagenUrl);
+  if (imagenUrl) borrador.imagenUrl = imagenUrl;
   Object.assign(borrador, { estado: "publicado", url: blog.url, slug: blog.slug, publicado: new Date().toISOString(), actualizado: new Date().toISOString() });
   await guardar(datos);
   // Lo que viene después no deshace la publicación si falla: se apunta y se puede repetir.
+  if (borrador.original && borrador.original !== borrador.cuerpo) {
+    borrador.lecciones = (await aprenderDeCorreccion({ antes: borrador.original, despues: borrador.cuerpo, donde: borrador.titulo }).catch(() => [])).map((l) => l.texto);
+  }
   borrador.aviso = await avisarBuscadores([blog.url, `${SITIO}blog.php`]).catch((e) => ({ estado: "error", detalle: e.message }));
   try {
     borrador.versiones = await versionesPorRed(borrador, blog.url);
@@ -439,8 +473,10 @@ export function montarVisibilidad(app, dependencias) {
 
   app.get("/api/visibilidad", requireAuth, responder(async () => {
     const datos = await leer();
+    const mibo = await contextoMibo();
     return {
       ...datos,
+      proyectosMibo: (mibo.proyectos || []).map((p) => p.nombre),
       redes: Object.fromEntries(Object.entries(REGLAS_CANAL).map(([k, v]) => [k, v.nombre])),
       estado: {
         blog: Boolean(process.env.AETERNAL_BLOG_API_TOKEN || process.env.BLOG_API_TOKEN),
@@ -455,7 +491,7 @@ export function montarVisibilidad(app, dependencias) {
   app.post("/api/visibilidad/borradores", requireAuth, responder(async (req) => {
     const titulo = texto(req.body?.titulo, 160);
     if (!titulo) throw new Error("Falta el tema del artículo.");
-    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque });
+    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, proyectoMibo: texto(req.body?.proyectoMibo, 120) });
   }));
 
   app.patch("/api/visibilidad/borradores/:id", requireAuth, responder(async (req) => {
@@ -465,6 +501,7 @@ export function montarVisibilidad(app, dependencias) {
     for (const [campo, max] of [["titulo", 160], ["descripcion", 300], ["cuerpo", 20000]]) {
       if (typeof req.body?.[campo] === "string") b[campo] = texto(req.body[campo], max);
     }
+    if (typeof req.body?.imagen === "string") b.imagen = rutaImagen(req.body.imagen) ? req.body.imagen : "";
     b.actualizado = new Date().toISOString();
     await guardar(datos);
     return b;
@@ -477,7 +514,7 @@ export function montarVisibilidad(app, dependencias) {
     return { ok: true };
   }));
 
-  app.post("/api/visibilidad/borradores/:id/publicar", requireAuth, responder((req) => publicarBorrador(req.params.id)));
+  app.post("/api/visibilidad/borradores/:id/publicar", requireAuth, responder((req) => publicarBorrador(req.params.id, d.publicOrigin ? d.publicOrigin(req) : "")));
 
   app.put("/api/visibilidad/fichas", requireAuth, responder(async (req) => {
     const lista = Array.isArray(req.body?.fichas) ? req.body.fichas : [];

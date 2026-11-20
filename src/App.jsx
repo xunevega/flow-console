@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Estadisticas from "./Estadisticas.jsx";
 import Visibilidad from "./Visibilidad.jsx";
+import MiVoz from "./MiVoz.jsx";
 const GROUP_COLORS = ["#4a7ab5", "#4a9e7a", "#7a60a8", "#c47a3a", "#c45050", "#8c8277"];
 const GENERATOR_OPTIONS = {
   intencion: ["Crear", "Analizar", "Publicar", "Planificar", "Aprender"],
@@ -7615,7 +7616,7 @@ export default function App() {
   function syncCurrentView() {
     if (view === "inbox") setInboxRefresh((current) => current + 1);
     else if (view === "calendar") setCalendarRefresh((current) => current + 1);
-    else if (view === "stats" || view === "visibilidad" || view === "add" || view === "correct") return;
+    else if (view === "stats" || view === "visibilidad" || view === "mivoz" || view === "add" || view === "correct") return;
     else loadWorkflows();
   }
 
@@ -7768,16 +7769,10 @@ export default function App() {
             LIBRETA
           </button>
           <button
-            className={view === "add" ? "active" : ""}
-            onClick={() => navigate("add")}
+            className={view === "mivoz" ? "active" : ""}
+            onClick={() => navigate("mivoz")}
           >
-            AÑADIR
-          </button>
-          <button
-            className={view === "correct" ? "active" : ""}
-            onClick={() => navigate("correct")}
-          >
-            CORREGIR
+            MI VOZ
           </button>
           <button
             className={view === "instagram" ? "active" : ""}
@@ -7871,6 +7866,8 @@ export default function App() {
           initialForumNoticeId={publicationForumContext.noticeId}
           initialForumPublicationMode={publicationForumContext.publicationMode}
         />
+      ) : view === "mivoz" ? (
+        <MiVoz api={api} />
       ) : view === "visibilidad" ? (
         <Visibilidad api={api} />
       ) : view === "stats" ? (

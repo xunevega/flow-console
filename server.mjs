@@ -12,6 +12,8 @@ import pg from "pg";
 import { PDFParse } from "pdf-parse";
 import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
 import { montarVisibilidad } from "./visibilidad.mjs";
+import { montarMiVoz, instruccionVoz } from "./mivoz.mjs";
+import { montarDesdeMibo } from "./desde-mibo.mjs";
 import { montarEstadisticas, tokenPinterest, refreshTokenYoutube, guardarRefreshYoutube, marcarEnlaces, conMarca, YOUTUBE_SCOPES } from "./estadisticas.mjs";
 
 const app = express();
@@ -202,6 +204,8 @@ app.use((req, res, next) => {
   );
   // El robot del Mac no tiene sesión: entra con su propia clave (se comprueba en estadisticas.mjs).
   if (req.method === "POST" && pathName === "/api/estadisticas/robot") return robotJsonParser(req, res, next);
+  // MiBØ, desde el Mac, tampoco: entra con su clave (se comprueba en desde-mibo.mjs).
+  if (req.method === "POST" && (pathName === "/api/mibo/contexto" || pathName === "/api/mibo/imagen")) return robotJsonParser(req, res, next);
   if (largeJsonRequest && !validSession(req)) {
     return res.status(401).json({ error: "No autorizado" });
   }
@@ -7222,6 +7226,9 @@ app.post("/api/generator", requireAuth, async (req, res) => {
   try {
     const requestedVariants = Math.max(1, Math.min(3, Number(req.body?.variantes || 3)));
     const { body: enrichedBody, visualAnalysis } = await enrichGeneratorBody(req.body || {});
+    // Mi voz entra en todo lo que escribe el generador (n8n o ChatGPT).
+    const voz = await instruccionVoz().catch(() => "");
+    if (voz) enrichedBody.instrucciones = [String(enrichedBody.instrucciones || "").trim(), voz].filter(Boolean).join("\n\n");
     const channel = req.body?.targetId || req.body?.destino || req.body?.formato || "";
     const channelInstruction = generatorChannelInstruction(channel, enrichedBody?.formato || req.body?.formato || "");
 
@@ -7618,6 +7625,8 @@ montarEstadisticas(app, {
   escapeHtml,
 });
 
+montarMiVoz(app, { requireAuth, dataDirectory, openaiChat, openaiTextModel });
+montarDesdeMibo(app, { requireAuth, dataDirectory });
 montarVisibilidad(app, {
   requireAuth,
   dataDirectory,
@@ -7626,6 +7635,8 @@ montarVisibilidad(app, {
   requestAeternalBlogArticles,
   openaiChat,
   openaiTextModel,
+  publicOrigin,
+  publicationMediaDirectory,
 });
 
 app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) => {

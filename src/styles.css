@@ -7598,3 +7598,20 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .vis-fichas fieldset { display: grid; gap: 8px; border: 0; border-top: 1px solid var(--border); padding: 12px 0; margin: 0; }
 .vis-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
 .vis-fichas fieldset .button { justify-self: start; }
+
+.vis-lista { display: grid; gap: 8px; margin-top: 10px; }
+.vis-lista article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); }
+.vis-lista p { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.vis-lista small { grid-column: 1; color: var(--secondary); font-size: 11px; }
+.vis-lista .button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.vis-proyectos { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin: 10px 0; }
+.vis-proyectos details { padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); font-size: 13px; }
+.vis-proyectos summary { cursor: pointer; }
+.vis-proyectos p, .vis-proyectos ul { margin: 6px 0 0; line-height: 1.45; }
+.vis-imagenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.vis-imagenes figure { margin: 0; display: grid; gap: 4px; }
+.vis-imagenes img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); }
+.vis-imagenes figcaption { font-size: 11px; color: var(--secondary); }
+.vis-imagenes.elegir button { padding: 0; border: 2px solid transparent; border-radius: 12px; background: none; cursor: pointer; }
+.vis-imagenes.elegir button.elegida { border-color: var(--blue); }
+.vis-sin-imagen { min-height: 90px; color: var(--secondary); font: inherit; font-size: 12px; }
