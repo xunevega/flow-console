@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Newsletter from "./Newsletter.jsx";
 
 // Pantalla de Visibilidad: Flow propone qué escribir, escribe el borrador, y al aprobarlo
 // lo publica en el blog, avisa a los buscadores y deja preparada una versión para cada red.
@@ -338,6 +339,8 @@ export default function Visibilidad({ api }) {
                 ))}
               </div>
             </section>
+
+            <Newsletter api={api} />
 
             <Fichas fichas={fichas} api={api} recargar={recargar} avisar={avisar} />
           </>

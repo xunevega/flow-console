@@ -10,6 +10,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { numerosEnviados } from "./newsletter.mjs";
 
 let d = null;
 let dir = "";
@@ -158,8 +159,9 @@ export function montarDesdeMibo(app, dependencias) {
         url: p.publicUrl || "",
         fecha: p.publishedAt || p.updatedAt,
       }));
+    const newsletters = (await numerosEnviados(desde).catch(() => [])).map((n) => ({ id: `news-${n.id}`, canal: "Newsletter", titulo: n.asunto, url: "", fecha: n.enviado }));
     const esperando = (vis.borradores || []).filter((b) => b.estado === "borrador").map((b) => b.titulo).slice(0, 10);
-    res.json({ ahora: new Date().toISOString(), avisos, publicado: [...articulos, ...publicaciones], borradores: esperando, ideas: (vis.ideas?.lista || []).length, flow: process.env.PUBLIC_ORIGIN || "" });
+    res.json({ ahora: new Date().toISOString(), avisos, publicado: [...articulos, ...publicaciones, ...newsletters], borradores: esperando, ideas: (vis.ideas?.lista || []).length, flow: process.env.PUBLIC_ORIGIN || "" });
   });
 
   // ── Para la pantalla de Flow (con sesión) ──

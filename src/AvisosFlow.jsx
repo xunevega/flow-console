@@ -11,6 +11,7 @@ const ETIQUETA = {
   web: "Web",
   mibo: "MiBØ",
   robot: "Robot",
+  suscriptor: "Newsletter",
 };
 const PESTANA = { visibilidad: "Abrir VISIBILIDAD", mivoz: "Abrir MI VOZ", stats: "Abrir ESTADÍSTICAS" };
 

@@ -356,6 +356,15 @@ export async function revisarTodo({ web = false } = {}) {
   }
 }
 
+// Para que otros módulos (la newsletter) dejen un aviso sin esperar a la vuelta de cada 2 horas.
+export async function avisoExterno(aviso) {
+  if (!archivo) return false;
+  const v = await leer();
+  const nuevo = poner(v, aviso);
+  if (nuevo) await guardar(v);
+  return nuevo;
+}
+
 export function montarAvisosFlow(app, dependencias) {
   d = dependencias;
   archivo = path.join(d.dataDirectory, "avisos-flow.json");
