@@ -415,8 +415,25 @@ function validSession(req) {
   }
 }
 
+// MiBØ (desde el Mac, con su clave X-MiBO-Token) puede leer, crear, editar y borrar notas de la
+// LIBRETA y tareas/citas del calendario, una a una. Nada más: ni borrar todo, ni lo demás de Flow.
+const RUTAS_DE_MIBO = [
+  ["GET", /^\/api\/calendar\/(tasks|notes)$/],
+  ["POST", /^\/api\/calendar\/(tasks|notes)$/],
+  ["PATCH", /^\/api\/calendar\/(tasks|notes)\/[\w-]+$/],
+  ["DELETE", /^\/api\/calendar\/(tasks|notes)\/[\w-]+$/],
+];
+
+function entraMibo(req) {
+  const esperada = String(process.env.MIBO_FLOW_TOKEN || "").trim();
+  const llega = String(req.get?.("X-MiBO-Token") || "").trim();
+  if (!esperada || !llega || !safeEqual(llega, esperada)) return false;
+  const ruta = String(req.path || "").split("?")[0];
+  return RUTAS_DE_MIBO.some(([metodo, patron]) => metodo === req.method && patron.test(ruta));
+}
+
 function requireAuth(req, res, next) {
-  if (!validSession(req)) return res.status(401).json({ error: "No autorizado" });
+  if (!validSession(req) && !entraMibo(req)) return res.status(401).json({ error: "No autorizado" });
   next();
 }
 
