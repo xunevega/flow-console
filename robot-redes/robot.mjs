@@ -21,7 +21,6 @@ const TOKEN = fs.readFileSync(path.join(DIR, ".robot-token"), "utf8").trim();
 const SOLO = (process.argv.find((a) => a.startsWith("--solo=")) || "").split("=")[1] || "";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PUERTO = 9333;
-const DESCARGAS = path.join(DIR, "descargas");
 const ESPERA_LOGIN_MS = 15 * 60 * 1000;
 const DIAS_INSTAGRAM = 60;
 
@@ -31,7 +30,6 @@ const log = (...a) => console.log(new Date().toLocaleTimeString("es-ES"), ...a);
 // ───────────────────────── Chrome por DevTools ─────────────────────────
 
 async function abrirChrome() {
-  fs.mkdirSync(DESCARGAS, { recursive: true });
   const chrome = spawn(CHROME, [
     `--remote-debugging-port=${PUERTO}`,
     `--user-data-dir=${path.join(DIR, "perfil-chrome")}`,
@@ -171,41 +169,44 @@ async function esperarSesion(p, red, dentro) {
 
 // ───────────────────────── LinkedIn ─────────────────────────
 
-async function linkedin(p, cdp) {
-  const url = "https://www.linkedin.com/analytics/creator/content/?metricType=IMPRESSIONS&timeRange=past_365_days";
-  await p.ir(url);
+async function linkedin(p) {
+  const analiticas = "https://www.linkedin.com/analytics/creator/content/?metricType=IMPRESSIONS&timeRange=past_28_days";
+  await p.ir(analiticas);
   const dentro = async () => !/\/(login|checkpoint|authwall|uas\/login|signup)/.test(await p.url())
-    && !(await p.hay("input#username, input[name='session_key']"));
+    && !(await p.hay("input#username, input[name='session_key']"))
+    && (await p.hay("a[href*='/feed/'], a[href*='/mynetwork/']"));
+  await pausa(3000);
   if (!(await dentro())) {
     if (!(await esperarSesion(p, "LinkedIn", dentro))) throw new Error("No se inició sesión en LinkedIn a tiempo.");
     await pausa(2000);
-    await p.ir(url);
+    await p.ir(analiticas);
   }
+  // 1) Resumen de los últimos 28 días (LinkedIn ya no deja exportar el Excel).
   await franja(p, "Flow · Leyendo tus estadísticas de LinkedIn…");
+  await pausa(5000, 7000);
+  await quitarFranja(p);
+  const resumen = await aFlow({ tipo: "linkedin-resumen", imagen: await p.captura() });
+  log(`LinkedIn resumen 28 días: ${resumen.guardado ? JSON.stringify(resumen.metricas) : resumen.motivo}`);
+
+  // 2) Tus publicaciones recientes, cada una con sus impresiones, pantalla a pantalla.
+  await p.ir("https://www.linkedin.com/in/me/recent-activity/all/");
   await pausa(4000, 6000);
-  for (const f of fs.readdirSync(DESCARGAS)) fs.rmSync(path.join(DESCARGAS, f), { force: true });
-  await cdp.enviar("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: DESCARGAS, eventsEnabled: true });
-  const terminada = cdp.esperarEvento("Browser.downloadProgress", (e) => e.state === "completed", 90000);
-  let pulsado = false;
-  for (let i = 0; i < 10 && !pulsado; i += 1) {
-    pulsado = await p.pulsarTexto("^(exportar|export)$");
-    if (!pulsado) await pausa(1500);
+  let leidas = 0;
+  for (let i = 0; i < 6; i += 1) {
+    await quitarFranja(p);
+    try {
+      const r = await aFlow({ tipo: "linkedin-publicaciones", imagen: await p.captura() });
+      leidas += r.leidas || 0;
+      log(`  pantalla ${i + 1}: ${r.leidas} publicaciones leídas`);
+    } catch (e) {
+      log(`  pantalla ${i + 1}: ${e.message}`);
+    }
+    await franja(p, `Flow · Leyendo tus publicaciones de LinkedIn (${i + 1} de 6)…`);
+    const fin = await p.evaluar("const antes = scrollY; scrollBy(0, innerHeight * 0.8); await new Promise((r) => setTimeout(r, 2500)); return scrollY === antes;");
+    if (fin) break;
+    await pausa(1500, 3000);
   }
-  if (!pulsado) throw new Error("No encuentro el botón Exportar de LinkedIn.");
-  await pausa(1500, 2500);
-  await p.evaluar(`
-    const d = [...document.querySelectorAll("[role=dialog]")].pop();
-    const b = d && [...d.querySelectorAll("button")].reverse().find((e) => /exportar|export/i.test(e.innerText));
-    if (b) b.click();
-    return !!b;`).catch(() => {});
-  await terminada;
-  await pausa(1000);
-  const archivo = fs.readdirSync(DESCARGAS).map((f) => path.join(DESCARGAS, f)).find((f) => /\.xlsx$/i.test(f));
-  if (!archivo) throw new Error("LinkedIn no descargó el Excel.");
-  const r = await aFlow({ tipo: "linkedin-excel", archivo: fs.readFileSync(archivo).toString("base64") });
-  fs.rmSync(archivo, { force: true });
-  log(`LinkedIn: ${r.publicaciones} publicaciones y ${r.meses} meses pasados a Flow.`);
-  return `LinkedIn: ${r.publicaciones} publicaciones`;
+  return `LinkedIn: resumen y ${leidas} lecturas de publicaciones`;
 }
 
 // ───────────────────────── Instagram ─────────────────────────
@@ -214,7 +215,8 @@ async function instagram(p) {
   await p.ir("https://www.instagram.com/");
   await pausa(2500, 4000);
   const dentro = async () => !/accounts\/login|challenge/.test(await p.url())
-    && !(await p.hay("input[name='username'], input[name='password']"));
+    && !(await p.hay("input[name='password'], a[href='/accounts/emailsignup/']"))
+    && (await p.hay("a[href='/direct/inbox/'], a[href^='/explore/'], svg[aria-label='Inicio'], svg[aria-label='Home']"));
   if (!(await dentro())) {
     if (!(await esperarSesion(p, "Instagram", dentro))) throw new Error("No se inició sesión en Instagram a tiempo.");
     await pausa(3000);
@@ -224,7 +226,9 @@ async function instagram(p) {
   // Tu perfil: el enlace «Perfil» del menú.
   let usuario = await p.evaluar(`
     const a = [...document.querySelectorAll("a[href^='/']")].find((e) => /^(perfil|profile)$/i.test((e.innerText || "").trim()));
-    return a ? a.getAttribute("href").replace(/\\//g, "") : "";`);
+    if (a) return a.getAttribute("href").replace(/\\//g, "");
+    const img = [...document.querySelectorAll("img[alt]")].find((i) => /foto del perfil de|profile picture/i.test(i.alt) && i.closest("a[href^='/']"));
+    return img ? img.closest("a").getAttribute("href").replace(/\\//g, "") : "";`);
   if (!usuario) {
     const config = path.join(DIR, "config.json");
     usuario = fs.existsSync(config) ? JSON.parse(fs.readFileSync(config, "utf8")).instagram || "" : "";
@@ -278,7 +282,7 @@ const resumen = [];
 for (const [nombre, fn] of [["linkedin", linkedin], ["instagram", instagram]]) {
   if (SOLO && SOLO !== nombre) continue;
   try {
-    resumen.push(await fn(p, cdp));
+    resumen.push(await fn(p));
   } catch (e) {
     log(`${nombre}: ${e.message}`);
     resumen.push(`${nombre}: no se pudo (${e.message})`);

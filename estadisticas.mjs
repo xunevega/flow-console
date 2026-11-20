@@ -730,6 +730,51 @@ async function guardarLinkedin({ diario, posts }) {
   return { meses: Object.keys(meses).length, publicaciones: posts.length, nuevas };
 }
 
+// Captura con varias publicaciones (p. ej. la actividad de LinkedIn): devuelve una lista.
+async function leerCapturaLista(imagenBase64, canal) {
+  const datos = String(imagenBase64 || "").replace(/^data:[^;]+;base64,/, "");
+  if (!datos) throw new Error("No ha llegado ninguna imagen.");
+  const respuesta = await d.openaiChat({
+    model: d.openaiVisionModel,
+    json: true,
+    temperature: 0,
+    maxTokens: 1500,
+    messages: [
+      { role: "system", content: "Lees capturas de pantalla de redes sociales y devuelves solo JSON. No inventes números: si un dato no aparece, déjalo fuera." },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Esta captura es de ${canal} y puede tener varias publicaciones del propio autor. Para cada publicación visible devuelve sus números.
+JSON: {"publicaciones":[{"titulo":"primeras 8-12 palabras del texto","fecha":"YYYY-MM-DD aproximada o vacío","metricas":{"impresiones":n,"me_gusta":n,"comentarios":n,"compartidos":n,"interacciones":n}}]}
+Las reacciones cuentan como "me_gusta"; "veces compartido"/"reposts" como "compartidos". Si pone "hace 2 sem" o "2 sem", calcula la fecha desde hoy (${isoDia(new Date())}).
+Ignora publicaciones cortadas sin texto legible y las que no son del autor (anuncios, sugerencias).`,
+          },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${datos}` } },
+        ],
+      },
+    ],
+  });
+  let leido = {};
+  try {
+    leido = JSON.parse(respuesta.text);
+  } catch {
+    return [];
+  }
+  return (Array.isArray(leido.publicaciones) ? leido.publicaciones : [])
+    .map((x) => {
+      const metricas = {};
+      for (const k of METRICAS_MANUALES) if (x?.metricas?.[k] !== undefined && x?.metricas?.[k] !== null) metricas[k] = r0(x.metricas[k]);
+      return {
+        titulo: String(x?.titulo || "").trim().slice(0, 160),
+        fecha: /^\d{4}-\d{2}-\d{2}$/.test(x?.fecha || "") ? x.fecha : "",
+        metricas,
+      };
+    })
+    .filter((x) => x.titulo && Object.keys(x.metricas).length);
+}
+
 async function leerCapturaInstagram(imagenBase64, tipoImagen) {
   const datos = String(imagenBase64 || "").replace(/^data:[^;]+;base64,/, "");
   if (!datos) throw new Error("No ha llegado ninguna imagen.");
@@ -1046,6 +1091,35 @@ export function montarEstadisticas(app, dependencias) {
         const datos = String(req.body?.archivo || "").replace(/^data:[^;]+;base64,/, "");
         const resultado = await guardarLinkedin(importarLinkedin(Buffer.from(datos, "base64")));
         return res.json({ ok: true, ...resultado });
+      }
+      if (tipo === "linkedin-resumen") {
+        const leido = await leerCapturaInstagram(req.body?.imagen, "image/png");
+        const entradas = await leerManual();
+        const mes = isoDia(new Date()).slice(0, 7);
+        const i = entradas.findIndex((e) => e.canal === "LinkedIn" && e.tipo === "mes" && e.origen === "robot" && e.fecha.startsWith(mes));
+        const entrada = limpiarEntrada({ canal: "LinkedIn", tipo: "mes", fecha: `${mes}-01`, titulo: `LinkedIn ${mes} (últimos 28 días)`, metricas: leido.metricas, origen: "robot" }, i >= 0 ? entradas[i] : {});
+        if (!Object.keys(entrada.metricas).length) return res.json({ ok: true, guardado: false, motivo: "La captura no tenía números." });
+        if (i >= 0) entradas[i] = entrada; else entradas.push(entrada);
+        await guardarJson(archivos.manual, { entradas });
+        cache.clear();
+        return res.json({ ok: true, guardado: true, metricas: entrada.metricas });
+      }
+      if (tipo === "linkedin-publicaciones") {
+        const lista = await leerCapturaLista(req.body?.imagen, "LinkedIn");
+        const entradas = await leerManual();
+        const clave = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").split(" ").filter(Boolean).slice(0, 6).join(" ");
+        let nuevas = 0;
+        for (const x of lista) {
+          const i = entradas.findIndex((e) => e.canal === "LinkedIn" && e.tipo !== "mes" && clave(e.titulo) === clave(x.titulo));
+          const previa = i >= 0 ? entradas[i] : {};
+          const entrada = limpiarEntrada({
+            canal: "LinkedIn", fecha: previa.fecha || x.fecha || isoDia(new Date()), titulo: x.titulo, metricas: x.metricas, origen: "robot",
+          }, previa);
+          if (i >= 0) entradas[i] = entrada; else { entradas.push(entrada); nuevas += 1; }
+        }
+        await guardarJson(archivos.manual, { entradas });
+        cache.clear();
+        return res.json({ ok: true, leidas: lista.length, nuevas });
       }
       if (tipo === "instagram-captura" || tipo === "instagram-cuenta") {
         const leido = await leerCapturaInstagram(req.body?.imagen, "image/png");
