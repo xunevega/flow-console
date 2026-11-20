@@ -7627,7 +7627,7 @@ montarEstadisticas(app, {
 });
 
 montarMiVoz(app, { requireAuth, dataDirectory, openaiChat, openaiTextModel });
-montarDesdeMibo(app, { requireAuth, dataDirectory });
+montarDesdeMibo(app, { requireAuth, dataDirectory, readPublicationPosts });
 montarAvisosFlow(app, { requireAuth, dataDirectory, openaiChat, openaiTextModel });
 montarVisibilidad(app, {
   requireAuth,

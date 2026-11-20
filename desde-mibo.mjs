@@ -136,6 +136,32 @@ export function montarDesdeMibo(app, dependencias) {
     }
   });
 
+  // MiBØ pregunta qué hay de nuevo en Flow: avisos sin atender, lo publicado desde «desde»
+  // y cuántos borradores esperan. Así lo apunta en sus proyectos y lo cuenta en el plan del día.
+  app.get("/api/mibo/novedades", async (req, res) => {
+    if (!autorizado(req)) return res.status(401).json({ error: "Clave de MiBØ incorrecta" });
+    const desde = Date.parse(String(req.query.desde || "")) || Date.now() - 7 * 24 * 3600 * 1000;
+    const avisos = (await leerJson(path.join(d.dataDirectory, "avisos-flow.json"), { avisos: [] })).avisos
+      .filter((a) => a.estado === "nuevo")
+      .map(({ id, tipo, titulo, texto: t, url, fecha, producto }) => ({ id, tipo, titulo, texto: String(t || "").split("\n")[0], url, fecha, producto }));
+    const vis = await leerJson(path.join(d.dataDirectory, "visibilidad.json"), { borradores: [] });
+    const articulos = (vis.borradores || [])
+      .filter((b) => b.estado === "publicado" && Date.parse(b.publicado) > desde)
+      .map((b) => ({ id: `art-${b.id}`, canal: "Blog", titulo: b.titulo, url: b.url || "", fecha: b.publicado, proyecto: b.proyectoMibo || "", producto: b.producto || "" }));
+    const posts = d.readPublicationPosts ? await d.readPublicationPosts().catch(() => []) : [];
+    const publicaciones = posts
+      .filter((p) => /^published/.test(String(p.status || "")) && Date.parse(p.publishedAt || p.updatedAt) > desde && (p.target?.id || p.targetId) !== "blog")
+      .map((p) => ({
+        id: `pub-${p.id}`,
+        canal: p.target?.name || p.targetId || "Red",
+        titulo: String(p.caption || "").split("\n")[0].slice(0, 140),
+        url: p.publicUrl || "",
+        fecha: p.publishedAt || p.updatedAt,
+      }));
+    const esperando = (vis.borradores || []).filter((b) => b.estado === "borrador").map((b) => b.titulo).slice(0, 10);
+    res.json({ ahora: new Date().toISOString(), avisos, publicado: [...articulos, ...publicaciones], borradores: esperando, ideas: (vis.ideas?.lista || []).length, flow: process.env.PUBLIC_ORIGIN || "" });
+  });
+
   // ── Para la pantalla de Flow (con sesión) ──
   app.get("/api/mibo", requireAuth, async (_, res) => {
     res.json({ contexto: await contextoMibo(), imagenes: await imagenesMibo({ max: MAX_IMAGENES }), conectado: Boolean(process.env.MIBO_FLOW_TOKEN) });
