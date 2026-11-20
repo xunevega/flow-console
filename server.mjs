@@ -11,6 +11,7 @@ import express from "express";
 import pg from "pg";
 import { PDFParse } from "pdf-parse";
 import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
+import { montarVisibilidad } from "./visibilidad.mjs";
 import { montarEstadisticas, tokenPinterest, refreshTokenYoutube, guardarRefreshYoutube, marcarEnlaces, conMarca, YOUTUBE_SCOPES } from "./estadisticas.mjs";
 
 const app = express();
@@ -7615,6 +7616,16 @@ montarEstadisticas(app, {
   oauthState,
   validOauthState,
   escapeHtml,
+});
+
+montarVisibilidad(app, {
+  requireAuth,
+  dataDirectory,
+  searchConsoleOAuthConfig,
+  searchConsoleAccessToken,
+  requestAeternalBlogArticles,
+  openaiChat,
+  openaiTextModel,
 });
 
 app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) => {

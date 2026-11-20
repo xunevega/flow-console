@@ -7564,3 +7564,37 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   .est-contenido span { grid-column: 2; text-align: left; }
   .est-barra { grid-template-columns: 100px minmax(0, 1fr) 36px; }
 }
+
+/* ───── Visibilidad ───── */
+.vis-estado { align-self: center; padding: 5px 11px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid var(--border-lit); }
+.vis-estado.ok { color: var(--green); }
+.vis-estado.mal { color: var(--amber); }
+.vis-ideas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 10px; }
+.vis-ideas article { display: grid; gap: 6px; align-content: start; padding: 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); }
+.vis-ideas small, .vis-borrador small { color: var(--secondary); font-size: 12px; }
+.vis-ideas p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+.vis-ideas .button { justify-self: start; }
+.vis-tema { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.vis-tema input { flex: 1 1 260px; }
+.vis input, .vis textarea, .vis select { font: inherit; font-size: 14px; color: var(--text); background: var(--raised); border: 1px solid var(--border-lit); border-radius: 10px; padding: 8px 10px; box-sizing: border-box; }
+.vis textarea { width: 100%; resize: vertical; line-height: 1.5; }
+.vis label { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--secondary); }
+.vis-borradores { display: grid; gap: 10px; }
+.vis-borrador { border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
+.vis-borrador > header { display: flex; justify-content: space-between; gap: 10px; padding: 12px 14px; cursor: pointer; }
+.vis-borrador > header div { display: grid; gap: 3px; }
+.vis-borrador.publicado > header b::before { content: "● "; color: var(--green); }
+.vis-editor, .vis-publicado { display: grid; gap: 10px; padding: 0 14px 14px; }
+.vis-editor input { width: 100%; }
+.vis-acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+.vis-publicado p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.vis-error { color: var(--red); }
+.vis-versiones { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+.vis-version { display: grid; gap: 8px; align-content: start; padding: 12px; border-radius: 12px; background: var(--raised); border: 1px solid var(--border); }
+.vis-version header { display: flex; justify-content: space-between; align-items: center; }
+.vis-version pre { margin: 0; white-space: pre-wrap; font: 13px/1.5 inherit; font-family: inherit; max-height: 260px; overflow: auto; }
+.vis-programar { display: flex; gap: 6px; flex-wrap: wrap; }
+.vis-fichas summary { cursor: pointer; font-weight: 700; }
+.vis-fichas fieldset { display: grid; gap: 8px; border: 0; border-top: 1px solid var(--border); padding: 12px 0; margin: 0; }
+.vis-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.vis-fichas fieldset .button { justify-self: start; }

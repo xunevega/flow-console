@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Estadisticas from "./Estadisticas.jsx";
+import Visibilidad from "./Visibilidad.jsx";
 const GROUP_COLORS = ["#4a7ab5", "#4a9e7a", "#7a60a8", "#c47a3a", "#c45050", "#8c8277"];
 const GENERATOR_OPTIONS = {
   intencion: ["Crear", "Analizar", "Publicar", "Planificar", "Aprender"],
@@ -7614,7 +7615,7 @@ export default function App() {
   function syncCurrentView() {
     if (view === "inbox") setInboxRefresh((current) => current + 1);
     else if (view === "calendar") setCalendarRefresh((current) => current + 1);
-    else if (view === "stats" || view === "add" || view === "correct") return;
+    else if (view === "stats" || view === "visibilidad" || view === "add" || view === "correct") return;
     else loadWorkflows();
   }
 
@@ -7799,6 +7800,12 @@ export default function App() {
           >
             ESTADÍSTICAS
           </button>
+          <button
+            className={view === "visibilidad" ? "active" : ""}
+            onClick={() => navigate("visibilidad")}
+          >
+            VISIBILIDAD
+          </button>
         </nav>
         <div className="top-actions">
           <Button onClick={goBack}>ATRÁS</Button>
@@ -7864,6 +7871,8 @@ export default function App() {
           initialForumNoticeId={publicationForumContext.noticeId}
           initialForumPublicationMode={publicationForumContext.publicationMode}
         />
+      ) : view === "visibilidad" ? (
+        <Visibilidad api={api} />
       ) : view === "stats" ? (
         <Estadisticas api={api} Antiguo={StatsDashboard} />
       ) : (
