@@ -1,7 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap");
 
 :root {
-  font-family: "Inter", sans-serif;
+  --font-ui: "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-ui);
   color: #3a332a;
   background: #e8e4de;
   --bg: #e8e4de;
@@ -593,7 +596,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .login-card h1 {
   margin: 7px 0 8px;
-  font: 700 34px "DM Sans", sans-serif;
+  font: 700 34px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .login-card p { margin: 0; color: var(--secondary); font-size: 13px; }
@@ -632,7 +635,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand strong {
-  font: 700 17px "DM Sans", sans-serif;
+  font: 700 17px var(--font-ui);
   letter-spacing: -0.02em;
 }
 .brand span {
@@ -687,7 +690,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .sidebar-heading { padding: 8px 8px 17px; display: flex; align-items: center; gap: 10px; }
 .sidebar-heading div { display: flex; justify-content: space-between; align-items: baseline; }
 .sidebar-heading > div { flex: 1; }
-.sidebar-heading strong { font: 700 17px "DM Sans", sans-serif; }
+.sidebar-heading strong { font: 700 17px var(--font-ui); }
 .sidebar-heading span { color: var(--dim); font-size: 10px; }
 .workflow-groups-scroll {
   height: 320px;
@@ -792,7 +795,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   align-items: center;
   gap: 11px;
   margin: 6px 0 10px;
-  font: 700 24px "DM Sans", sans-serif;
+  font: 700 24px var(--font-ui);
   letter-spacing: -0.025em;
 }
 .tags { display: flex; gap: 7px; flex-wrap: wrap; }
@@ -895,7 +898,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
-.metric-grid strong { font: 700 19px "DM Sans", sans-serif; }
+.metric-grid strong { font: 700 19px var(--font-ui); }
 .success { color: var(--green) !important; }
 .error { color: var(--red) !important; }
 .running { color: var(--amber) !important; }
@@ -932,7 +935,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .calendar-header h2 {
   margin: 4px 0 5px;
-  font: 700 28px "DM Sans", sans-serif;
+  font: 700 28px var(--font-ui);
   letter-spacing: -0.03em;
 }
 .calendar-header p {
@@ -975,7 +978,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   gap: 9px;
 }
 .calendar-monthbar strong {
-  font: 700 18px "DM Sans", sans-serif;
+  font: 700 18px var(--font-ui);
   letter-spacing: -0.02em;
 }
 .calendar-monthbar span {
@@ -1034,7 +1037,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .calendar-grid time {
   color: var(--text);
-  font: 900 13px "DM Sans", sans-serif;
+  font: 900 13px var(--font-ui);
 }
 .calendar-grid button.selected time {
   color: var(--text);
@@ -1446,7 +1449,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .task-series-info strong {
   color: var(--text);
-  font: 800 10px "DM Sans", sans-serif;
+  font: 800 10px var(--font-ui);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -1799,7 +1802,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .product-hero h2 {
   margin: 4px 0 8px;
-  font: 800 32px "DM Sans", sans-serif;
+  font: 800 32px var(--font-ui);
   letter-spacing: -0.035em;
 }
 .product-hero p {
@@ -1872,7 +1875,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   font-weight: 800;
 }
 .product-flow strong {
-  font: 800 15px "DM Sans", sans-serif;
+  font: 800 15px var(--font-ui);
 }
 .product-list {
   display: grid;
@@ -1910,7 +1913,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: var(--shadow-raised);
 }
 .product-ops strong {
-  font: 800 14px "DM Sans", sans-serif;
+  font: 800 14px var(--font-ui);
 }
 .product-ops p {
   flex: 1;
@@ -1937,7 +1940,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .rag-header h2 {
   margin: 4px 0 7px;
-  font: 800 30px "DM Sans", sans-serif;
+  font: 800 30px var(--font-ui);
   letter-spacing: -0.035em;
 }
 .rag-header p {
@@ -2137,7 +2140,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--secondary);
   box-shadow: var(--shadow-raised);
   cursor: pointer;
-  font: 800 12px "DM Sans", sans-serif;
+  font: 800 12px var(--font-ui);
   text-transform: uppercase;
 }
 .rag-utility-picker button.selected {
@@ -2176,7 +2179,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   pointer-events: none;
 }
 .rag-dropzone strong {
-  font: 800 18px "DM Sans", sans-serif;
+  font: 800 18px var(--font-ui);
   color: var(--text);
 }
 .rag-dropzone.compact strong {
@@ -2201,7 +2204,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   text-align: center;
 }
 .rag-empty strong {
-  font: 800 18px "DM Sans", sans-serif;
+  font: 800 18px var(--font-ui);
   color: var(--text);
 }
 .rag-empty span {
@@ -2267,7 +2270,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
-  font: 800 11px "DM Sans", sans-serif;
+  font: 800 11px var(--font-ui);
   letter-spacing: 0.04em;
   padding: 10px 14px;
   text-transform: uppercase;
@@ -2286,7 +2289,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: var(--shadow-raised);
 }
 .rag-card-summary strong {
-  font: 800 14px "DM Sans", sans-serif;
+  font: 800 14px var(--font-ui);
 }
 .rag-card-summary span {
   color: var(--secondary);
@@ -2876,7 +2879,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .mailboxes-title { padding: 2px 12px 20px; }
 .mailboxes-title h2 {
   margin: 5px 0 0;
-  font: 700 24px "DM Sans", sans-serif;
+  font: 700 24px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .inbox-karma {
@@ -2897,7 +2900,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .inbox-karma strong {
   display: block;
   margin-top: 6px;
-  font: 800 28px "DM Sans", sans-serif;
+  font: 800 28px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .inbox-karma-scoreline {
@@ -3074,7 +3077,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 700 13px "DM Sans", sans-serif;
+  font: 700 13px var(--font-ui);
 }
 .message-toolbar span { color: var(--dim); font-size: 8px; }
 .message-toolbar input {
@@ -3183,7 +3186,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .reader-header h2 {
   max-width: 880px;
   margin: 7px 0;
-  font: 700 25px/1.17 "DM Sans", sans-serif;
+  font: 700 25px/1.17 var(--font-ui);
   letter-spacing: -0.035em;
 }
 .reader-header p { margin: 0; color: var(--dim); font-size: 9px; }
@@ -3248,7 +3251,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: #5f4423;
 }
 .reader-warning strong {
-  font: 800 11px/1.2 "DM Sans", sans-serif;
+  font: 800 11px/1.2 var(--font-ui);
   text-transform: uppercase;
   letter-spacing: .06em;
 }
@@ -3290,7 +3293,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .information-header { padding: 28px 28px 10px; }
 .information-header h2 {
   margin: 7px 0 7px;
-  font: 700 32px "DM Sans", sans-serif;
+  font: 700 32px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .information-header p { margin: 0; color: var(--secondary); font-size: 12px; }
@@ -3334,7 +3337,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .donut span {
   align-self: end;
-  font: 800 28px "DM Sans", sans-serif;
+  font: 800 28px var(--font-ui);
 }
 .donut small {
   align-self: start;
@@ -3449,7 +3452,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .group-stats header strong {
   flex: 1;
   overflow: hidden;
-  font: 700 13px "DM Sans", sans-serif;
+  font: 700 13px var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3485,7 +3488,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .system-module-grid strong {
   overflow: hidden;
   color: var(--text);
-  font: 800 12px "DM Sans", sans-serif;
+  font: 800 12px var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3560,7 +3563,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: var(--raised);
   box-shadow: var(--shadow-lifted);
 }
-.modal-card h3 { margin: 5px 0 0; font: 700 23px "DM Sans", sans-serif; }
+.modal-card h3 { margin: 5px 0 0; font: 700 23px var(--font-ui); }
 .modal-card label, .modal-card legend {
   color: var(--secondary);
   font-size: 10px;
@@ -3611,7 +3614,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .generator-header h2 {
   margin: 7px 0;
-  font: 700 32px "DM Sans", sans-serif;
+  font: 700 32px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .generator-header p { margin: 0; color: var(--secondary); font-size: 11px; }
@@ -3853,7 +3856,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .generator-results-heading h3 {
   margin: 5px 0 0;
-  font: 700 22px "DM Sans", sans-serif;
+  font: 700 22px var(--font-ui);
 }
 .generated-hashtags-panel {
   display: grid;
@@ -3893,7 +3896,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   text-align: center;
   font-size: 10px;
 }
-.generator-empty strong { color: var(--secondary); font: 700 15px "DM Sans", sans-serif; }
+.generator-empty strong { color: var(--secondary); font: 700 15px var(--font-ui); }
 .generator-empty .button {
   justify-self: center;
   margin-top: 8px;
@@ -4084,7 +4087,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: var(--field);
   box-shadow: var(--shadow-inset);
   color: var(--text);
-  font: 800 13px "DM Sans", sans-serif;
+  font: 800 13px var(--font-ui);
   padding: 11px 12px;
 }
 .control-tag-actions {
@@ -4175,7 +4178,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .instagram-header h2 {
   margin: 7px 0;
-  font: 700 32px "DM Sans", sans-serif;
+  font: 700 32px var(--font-ui);
   letter-spacing: -0.04em;
 }
 .instagram-header p { margin: 0; color: var(--secondary); font-size: 11px; }
@@ -4220,7 +4223,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   place-items: center;
   border-radius: 50%;
   color: white;
-  font: 800 14px "DM Sans", sans-serif;
+  font: 800 14px var(--font-ui);
   font-style: normal;
   box-shadow: var(--shadow-raised);
 }
@@ -4228,7 +4231,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   max-width: 100%;
   overflow: hidden;
   color: var(--text);
-  font: 800 13px "DM Sans", sans-serif;
+  font: 800 13px var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4323,7 +4326,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   place-items: center;
   border-radius: 50%;
   color: white;
-  font: 800 18px "DM Sans", sans-serif;
+  font: 800 18px var(--font-ui);
   font-style: normal;
   box-shadow: var(--shadow-raised);
 }
@@ -4334,7 +4337,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .publication-hub-grid strong {
   color: var(--text);
-  font: 800 20px "DM Sans", sans-serif;
+  font: 800 20px var(--font-ui);
 }
 .publication-hub-grid span {
   max-width: 260px;
@@ -4437,7 +4440,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   place-items: center;
   border-radius: 50%;
   color: white;
-  font: 800 14px "DM Sans", sans-serif;
+  font: 800 14px var(--font-ui);
   font-style: normal;
   letter-spacing: 0;
 }
@@ -4445,7 +4448,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   max-width: 100%;
   overflow: hidden;
   color: var(--text);
-  font: 800 19px "DM Sans", sans-serif;
+  font: 800 19px var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4470,7 +4473,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .forum-karma-line b {
   color: var(--dim);
-  font: 800 30px "DM Sans", sans-serif;
+  font: 800 30px var(--font-ui);
   line-height: 1;
 }
 .forum-karma-line b.good { color: var(--green); }
@@ -4518,7 +4521,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .forum-manager-header h3 {
   margin: 4px 0;
-  font: 800 28px "DM Sans", sans-serif;
+  font: 800 28px var(--font-ui);
   letter-spacing: -0.03em;
 }
 .forum-manager-header p {
@@ -4533,7 +4536,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   gap: 3px;
 }
 .forum-manager-karma strong {
-  font: 800 34px "DM Sans", sans-serif;
+  font: 800 34px var(--font-ui);
   line-height: 1;
 }
 .forum-manager-karma.good strong { color: var(--green); }
@@ -4558,7 +4561,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .forum-real-karma-form label strong {
   color: var(--blue);
-  font: 800 26px "DM Sans", sans-serif;
+  font: 800 26px var(--font-ui);
   line-height: 1;
 }
 .forum-real-karma-form label small {
@@ -4745,7 +4748,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   gap: 4px;
 }
 .forum-publication-panel header strong {
-  font: 800 12px/1.2 "DM Sans", sans-serif;
+  font: 800 12px/1.2 var(--font-ui);
   text-transform: uppercase;
   letter-spacing: .08em;
 }
@@ -4834,7 +4837,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   padding: 6px 9px;
   font-size: 9px;
 }
-.instagram-phone-head strong { color: var(--text); font: 700 13px "DM Sans", sans-serif; }
+.instagram-phone-head strong { color: var(--text); font: 700 13px var(--font-ui); }
 .publication-target-warning {
   margin: 0 6px 12px;
   border: 1px solid rgba(196, 122, 58, 0.24);
@@ -4907,7 +4910,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: var(--raised);
   color: var(--blue);
   box-shadow: var(--shadow-raised);
-  font: 900 15px "DM Sans", sans-serif;
+  font: 900 15px var(--font-ui);
 }
 .instagram-drop-content strong {
   color: var(--text);
@@ -5065,7 +5068,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .publication-mode-toggle span {
   color: var(--secondary);
-  font: 900 10px "DM Sans", sans-serif;
+  font: 900 10px var(--font-ui);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -5077,7 +5080,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: #3a332a;
   box-shadow: 2px 2px 7px rgba(139, 124, 105, 0.22), -2px -2px 6px rgba(255, 255, 255, 0.7);
   cursor: pointer;
-  font: 900 12px "DM Sans", sans-serif;
+  font: 900 12px var(--font-ui);
   padding: 0 12px;
 }
 .publication-mode-toggle button.active {
@@ -5112,7 +5115,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .linkedin-article-adapter header {
   color: var(--secondary);
-  font: 900 11px "DM Sans", sans-serif;
+  font: 900 11px var(--font-ui);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -5122,7 +5125,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: rgba(255, 255, 255, 0.72);
   color: var(--blue);
   cursor: pointer;
-  font: 900 11px "DM Sans", sans-serif;
+  font: 900 11px var(--font-ui);
   padding: 8px 10px;
 }
 .linkedin-article-adapter button:disabled {
@@ -5176,7 +5179,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   display: grid;
   gap: 6px;
   color: var(--secondary);
-  font: 900 10px "DM Sans", sans-serif;
+  font: 900 10px var(--font-ui);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -5217,7 +5220,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .blog-article-list header {
   grid-template-columns: minmax(0, 1fr) auto;
   color: var(--secondary);
-  font: 900 11px "DM Sans", sans-serif;
+  font: 900 11px var(--font-ui);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -5256,7 +5259,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   background: rgba(255, 255, 255, 0.72);
   color: var(--blue);
   cursor: pointer;
-  font: 900 11px "DM Sans", sans-serif;
+  font: 900 11px var(--font-ui);
   padding: 8px 10px;
   text-decoration: none;
 }
@@ -5290,7 +5293,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--secondary);
   box-shadow: var(--shadow-raised);
   cursor: pointer;
-  font: 900 11px "DM Sans", sans-serif;
+  font: 900 11px var(--font-ui);
   letter-spacing: 0.08em;
   list-style: none;
 }
@@ -5316,7 +5319,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--secondary);
   box-shadow: none;
   cursor: pointer;
-  font: 900 13px "DM Sans", sans-serif;
+  font: 900 13px var(--font-ui);
 }
 .caption-toolbar button:hover {
   color: var(--blue);
@@ -5427,7 +5430,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .instagram-caption figcaption {
   min-height: 18px;
   color: var(--secondary);
-  font: 800 12px/1.35 "DM Sans", sans-serif;
+  font: 800 12px/1.35 var(--font-ui);
 }
 .instagram-caption figcaption:empty::before {
   content: "Pie de imagen";
@@ -5887,7 +5890,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   text-transform: uppercase;
 }
 .stats-summary-grid strong {
-  font: 700 26px "DM Sans", sans-serif;
+  font: 700 26px var(--font-ui);
   letter-spacing: -0.03em;
 }
 .stats-layout {
@@ -6298,7 +6301,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: var(--shadow-lifted);
 }
 .stats-month-grid strong {
-  font: 700 17px "DM Sans", sans-serif;
+  font: 700 17px var(--font-ui);
   letter-spacing: -0.02em;
 }
 .stats-month-grid span {
@@ -6700,7 +6703,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--text);
   font-size: 30px;
   font-weight: 900;
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
   letter-spacing: 0;
 }
 .calendar-nav-icon {
@@ -6769,7 +6772,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--text);
   font-size: 28px;
   font-weight: 900;
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
   letter-spacing: 0;
 }
 .dashboard-month-head span {
@@ -6853,7 +6856,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   bottom: 11px;
   font-size: 15px;
   font-weight: 900;
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
 }
 .day-action-count {
   position: absolute;
@@ -6868,7 +6871,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: #45565d;
   font-size: 9px;
   font-weight: 950;
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.76),
     0 4px 9px rgba(69, 86, 93, 0.08);
@@ -6909,7 +6912,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   color: var(--text);
   font-size: 24px;
   font-weight: 900;
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
   letter-spacing: 0;
   text-transform: capitalize;
 }
@@ -7239,7 +7242,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.62),
     6px 6px 15px rgba(139, 124, 105, 0.12);
-  font-family: "DM Sans", "Inter", sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 900;
   letter-spacing: 0.11em;
@@ -7305,7 +7308,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.58),
     6px 6px 15px rgba(139, 124, 105, 0.12);
-  font: 900 13px "DM Sans", "Inter", sans-serif;
+  font: 900 13px var(--font-ui);
   letter-spacing: 0.04em;
 }
 .notebook-editor .calendar-note-images,
@@ -7363,7 +7366,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.5),
     6px 6px 15px rgba(139, 124, 105, 0.12);
-  font: 900 13px "DM Sans", "Inter", sans-serif;
+  font: 900 13px var(--font-ui);
   letter-spacing: 0;
   text-transform: none;
 }
@@ -7397,7 +7400,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   border: 0;
   background: transparent;
   color: #1f252a;
-  font: 800 13px/1.42 "DM Sans", "Inter", sans-serif;
+  font: 800 13px/1.42 var(--font-ui);
   text-align: left;
   white-space: pre-wrap;
   overflow: hidden;
@@ -7487,14 +7490,14 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 /* Estadísticas nuevas (src/Estadisticas.jsx) */
 .est { display: grid; gap: 16px; padding-top: 34px; }
 .est-cabecera { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; }
-.est-cabecera h2 { margin: 4px 0 0; font: 700 30px "DM Sans", sans-serif; letter-spacing: -0.03em; }
+.est-cabecera h2 { margin: 4px 0 0; font: 700 30px var(--font-ui); letter-spacing: -0.03em; }
 .est-nav { display: flex; gap: 8px; }
 .est-nav .button { min-width: 44px; }
 .est-frase { margin: 0; font-size: 16px; line-height: 1.6; color: var(--text); max-width: 900px; }
 .est-tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
 .est-tarjeta { display: grid; gap: 6px; padding: 18px; border: 1px solid rgba(255, 255, 255, 0.52); border-radius: 16px; background: var(--card); box-shadow: var(--shadow-raised); }
 .est-tarjeta span { color: var(--secondary); font-size: 10px; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; }
-.est-tarjeta strong { font: 700 28px "DM Sans", sans-serif; letter-spacing: -0.03em; }
+.est-tarjeta strong { font: 700 28px var(--font-ui); letter-spacing: -0.03em; }
 .est-dif { color: var(--dim); font-size: 12px; }
 .est-dif.sube { color: var(--green); }
 .est-dif.baja { color: var(--red); }
@@ -7503,13 +7506,13 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .est-redes header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .est-redes header small { color: var(--dim); font-size: 11px; }
 .est-redes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; color: var(--secondary); }
-.est-redes ul strong { color: var(--text); font: 700 16px "DM Sans", sans-serif; margin-right: 4px; }
+.est-redes ul strong { color: var(--text); font: 700 16px var(--font-ui); margin-right: 4px; }
 .est-redes p { margin: 0; font-size: 13px; color: var(--secondary); line-height: 1.5; }
 .est-redes a { color: var(--blue); }
 .est-subir { justify-self: start; cursor: pointer; }
 .est-panel { padding: 16px 18px; display: grid; gap: 12px; }
-.est-panel h3 { margin: 0; font: 700 15px "DM Sans", sans-serif; }
-.est-panel summary { cursor: pointer; font: 700 14px "DM Sans", sans-serif; }
+.est-panel h3 { margin: 0; font: 700 15px var(--font-ui); }
+.est-panel summary { cursor: pointer; font: 700 14px var(--font-ui); }
 .est-panel-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .est-filtros { display: flex; gap: 6px; flex-wrap: wrap; }
 .est-filtros button { border: 1px solid var(--border-lit); background: transparent; color: var(--secondary); border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
