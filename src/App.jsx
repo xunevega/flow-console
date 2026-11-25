@@ -5797,6 +5797,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                         <article key={check.id} className={check.level}>
                           <strong>{check.label}</strong>
                           {check.detail ? <p>{check.detail}</p> : null}
+                          {check.action?.href ? <a className="publication-upload-action" href={check.action.href}>{check.action.label}</a> : null}
                         </article>
                       ))}
                     </div>
