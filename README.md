@@ -101,7 +101,14 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
 - Publica en blog propio cuando esta configurado.
 - Crea y edita articulos de blog.
 - Adapta articulos de blog a LinkedIn.
-- Prepara/publica para LinkedIn segun modo configurado.
+- Publica posts en LinkedIn (hasta 3.000 caracteres, con imagen) por la API oficial
+  si no hay worker externo. Necesita `LINKEDIN_CLIENT_ID` y `LINKEDIN_CLIENT_SECRET`
+  (app de LinkedIn Developers con "Share on LinkedIn" y "Sign In with LinkedIn using
+  OpenID Connect", URL de retorno `https://<dominio>/oauth/linkedin/callback`) y
+  autorizar una vez con el boton CONECTAR LINKEDIN. El token se guarda en
+  `DATA_DIRECTORY/linkedin-oauth.json` y dura 60 dias. Articulos y textos de mas de
+  3.000 caracteres van a mano (la API no los admite), como Instagram sin API.
+  Antes, sin worker, LinkedIn iba a n8n, que acusaba recibo sin publicar.
 - Publica en Pinterest si la API esta configurada.
 - Publica en YouTube si OAuth esta configurado.
 - Prepara TikTok de forma asistida.

@@ -10,6 +10,7 @@ import * as ftp from "basic-ftp";
 import express from "express";
 import pg from "pg";
 import { PDFParse } from "pdf-parse";
+import { createLinkedIn, LINKEDIN_POST_MAX, linkedinVaAMano } from "./linkedin.mjs";
 import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
 import { montarVisibilidad } from "./visibilidad.mjs";
 import { montarMiVoz, instruccionVoz } from "./mivoz.mjs";
@@ -446,21 +447,21 @@ function requireInternalRag(req, res, next) {
   next();
 }
 
-function oauthState() {
+function oauthState(purpose = "youtube-oauth") {
   const payload = Buffer.from(JSON.stringify({
-    purpose: "youtube-oauth",
+    purpose,
     nonce: crypto.randomUUID(),
     expiresAt: Date.now() + 10 * 60 * 1000,
   })).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 
-function validOauthState(value) {
+function validOauthState(value, purpose = "youtube-oauth") {
   const [payload, signature] = String(value || "").split(".");
   if (!payload || !signature || !safeEqual(signature, sign(payload))) return false;
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString());
-    return parsed?.purpose === "youtube-oauth" && parsed.expiresAt > Date.now();
+    return parsed?.purpose === purpose && parsed.expiresAt > Date.now();
   } catch {
     return false;
   }
@@ -3594,6 +3595,7 @@ function deliveryModeForPublication(post = {}) {
   const resultMode = String(post.result?.deliveryMode || "").trim();
   if (resultMode === "youtube_data_api") return "API";
   if (resultMode === "pinterest_api") return "API";
+  if (resultMode === "linkedin_api") return "API";
   if (resultMode === "instagram_api") return "API";
   if (resultMode === "manual") return "a mano";
   if (targetId === "blog") return "API";
@@ -3627,6 +3629,26 @@ async function publicationPreflight(payload, workerHealth = null) {
     else block("worker", "Worker caído", worker.error || "El worker no responde.");
     if (safeUrl(payload.videoUrl || payload.imageUrl)) ok("video", "Vídeo OK");
     else block("video", "Falta vídeo", "TikTok necesita un vídeo.");
+  } else if (targetId === "linkedin" && !publicationExternalWorkerUrl) {
+    if (linkedinVaAMano(payload)) {
+      // La API no publica artículos ni posts de más de 3.000 caracteres: va a mano, como Instagram.
+      const length = String(payload?.caption || "").trim().length;
+      warn("linkedin", "LinkedIn a mano", `${payload?.options?.linkedinMode === "article" ? "La API oficial no publica artículos" : `Tiene ${length} caracteres y un post admite ${LINKEDIN_POST_MAX}`}. Flow lo deja pendiente: cópialo, publícalo en LinkedIn con «Escribir artículo» y luego confirma aquí que está publicado.`);
+    } else {
+      const connect = { label: "CONECTAR LINKEDIN", href: "/oauth/linkedin/start" };
+      const status = await linkedin.status();
+      if (!status.appConfigured) {
+        block("linkedin", "LinkedIn sin configurar", "Faltan LINKEDIN_CLIENT_ID y LINKEDIN_CLIENT_SECRET en las variables de Railway.");
+      } else if (!status.connected) {
+        block("linkedin", "LinkedIn sin conectar", "Pulsa el botón y autoriza a Flow Console en LinkedIn (una sola vez).");
+        checks[checks.length - 1].action = connect;
+      } else if (status.daysLeft !== null && status.daysLeft < 7) {
+        warn("linkedin", "LinkedIn caduca pronto", `La conexión caduca en ${Math.max(status.daysLeft, 0)} días. Vuelve a conectarla.`);
+        checks[checks.length - 1].action = connect;
+      } else {
+        ok("linkedin", "LinkedIn conectado", `Publica directamente con la API oficial${status.name ? ` como ${status.name}` : ""}.`);
+      }
+    }
   } else if (targetId === "linkedin") {
     const worker = workerHealth || await externalWorkerHealth();
     if (worker.ok && worker.loggedIn) ok("linkedin", "LinkedIn sesión OK", "Worker disponible.");
@@ -4239,6 +4261,30 @@ function localPublicationMediaPath(mediaUrl) {
   }
 }
 
+const MEDIA_TYPES = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
+
+async function readPublicationImage(imageUrl) {
+  const localPath = localPublicationMediaPath(imageUrl);
+  if (localPath) {
+    return { bytes: await fs.readFile(localPath), mimeType: MEDIA_TYPES[path.extname(localPath).toLowerCase()] || "" };
+  }
+  const url = safeUrl(imageUrl);
+  if (!url) throw new Error("La imagen no tiene una URL válida");
+  const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
+  if (!response.ok) throw new Error(`No se pudo descargar la imagen (${response.status})`);
+  const mimeType = String(response.headers.get("content-type") || "").split(";")[0].trim()
+    || MEDIA_TYPES[path.extname(new URL(url).pathname).toLowerCase()] || "";
+  return { bytes: Buffer.from(await response.arrayBuffer()), mimeType };
+}
+
+const linkedin = createLinkedIn({
+  dataDirectory,
+  publicOrigin,
+  makeState: oauthState,
+  checkState: validOauthState,
+  readMedia: readPublicationImage,
+});
+
 async function readPublicationVideo(videoUrl) {
   const localPath = localPublicationMediaPath(videoUrl);
   if (localPath) {
@@ -4411,6 +4457,12 @@ async function publishPublicationPayload(payload, source = "flow-console") {
   }
   if (payload?.target?.id === "linkedin" && publicationExternalWorkerUrl) {
     return publishWithExternalWorker(payload, "/linkedin/publish");
+  }
+  if (payload?.target?.id === "linkedin") {
+    // Sin worker: posts por la API oficial; artículos y textos largos, a mano.
+    // Nunca por n8n: su webhook acusaba recibo sin publicar nada.
+    if (linkedinVaAMano(payload)) return { ok: true, status: "manual_pending_confirmation", deliveryMode: "manual" };
+    return linkedin.publish(payload);
   }
   if (payload?.target?.id === "tiktok" && publicationExternalWorkerUrl) {
     const mode = payload?.options?.tiktokMode === "publish" ? "publish" : "draft";
@@ -5768,6 +5820,7 @@ app.get("/api/oauth/pinterest/status", requireAuth, (_, res) => {
 
 app.get("/api/publications/channels/status", requireAuth, async (_, res) => {
   const worker = await externalWorkerHealth();
+  const linkedinStatus = await linkedin.status();
   const youtube = youtubeOAuthConfig();
   let youtubeAccessOk = false;
   let youtubeError = "";
@@ -5796,13 +5849,24 @@ app.get("/api/publications/channels/status", requireAuth, async (_, res) => {
             : worker.error,
         }),
     },
-    {
+    publicationExternalWorkerUrl ? {
       id: "linkedin",
       name: "LinkedIn",
       level: worker.ok && worker.loggedIn ? "active" : "attention",
       label: worker.ok && worker.loggedIn ? "Sesión OK" : worker.ok ? "Sesión a revisar" : "Worker caído",
       delivery: "Worker navegador",
       detail: "Artículo con imagen validado; la sesión depende del storage compartido del worker.",
+    } : {
+      id: "linkedin",
+      name: "LinkedIn",
+      level: linkedinStatus.connected ? "active" : "attention",
+      label: linkedinStatus.connected ? "API oficial" : linkedinStatus.appConfigured ? "Sin conectar" : "Faltan credenciales",
+      delivery: "API de LinkedIn",
+      detail: linkedinStatus.connected
+        ? `Publica posts de hasta ${LINKEDIN_POST_MAX} caracteres${linkedinStatus.daysLeft !== null ? `; la conexión dura ${linkedinStatus.daysLeft} días más` : ""}. Los artículos, a mano.`
+        : linkedinStatus.appConfigured
+          ? "Pulsa CONECTAR LINKEDIN en Publicaciones para autorizar."
+          : "Añade LINKEDIN_CLIENT_ID y LINKEDIN_CLIENT_SECRET en Railway.",
     },
     {
       id: "youtube",
@@ -5916,6 +5980,35 @@ app.post("/api/publications/generate-image", requireAuth, async (req, res) => {
   } catch (error) {
     res.status(error.status || 502).json({ error: error.message });
   }
+});
+
+function linkedinOAuthPage(title, body) {
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#f6f1e8;color:#241f19;margin:0;padding:40px;line-height:1.45}main{max-width:720px;margin:auto}a{color:#241f19}</style>
+<main><h1>${escapeHtml(title)}</h1>${body}<p><a href="/">Volver a Flow Console</a></p></main>`;
+}
+
+app.get("/oauth/linkedin/start", (req, res) => {
+  if (!validSession(req)) return res.redirect("/");
+  try {
+    res.redirect(linkedin.authUrl(req));
+  } catch (error) {
+    res.status(500).type("html").send(linkedinOAuthPage("LinkedIn sin configurar", `<p>${escapeHtml(error.message)}</p>`));
+  }
+});
+
+app.get("/oauth/linkedin/callback", async (req, res) => {
+  try {
+    const result = await linkedin.handleCallback(req);
+    const until = result.expiresAt ? new Date(result.expiresAt).toLocaleDateString("es-ES") : "";
+    res.type("html").send(linkedinOAuthPage("LinkedIn conectado", `<p>Flow Console ya puede publicar en LinkedIn${result.name ? ` como <strong>${escapeHtml(result.name)}</strong>` : ""}.</p>${until ? `<p>La conexión dura hasta el ${escapeHtml(until)}; Flow te avisará antes.</p>` : ""}`));
+  } catch (error) {
+    res.status(error.status || 500).type("html").send(linkedinOAuthPage("No se pudo conectar LinkedIn", `<p>${escapeHtml(error.message)}</p>`));
+  }
+});
+
+app.get("/api/oauth/linkedin/status", requireAuth, async (_, res) => {
+  res.json({ ok: true, ...(await linkedin.status()) });
 });
 
 app.get("/oauth/youtube/start", requireAuth, (req, res) => {
