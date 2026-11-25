@@ -106,9 +106,16 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
   (app de LinkedIn Developers con "Share on LinkedIn" y "Sign In with LinkedIn using
   OpenID Connect", URL de retorno `https://<dominio>/oauth/linkedin/callback`) y
   autorizar una vez con el boton CONECTAR LINKEDIN. El token se guarda en
-  `DATA_DIRECTORY/linkedin-oauth.json` y dura 60 dias. Articulos y textos de mas de
-  3.000 caracteres van a mano (la API no los admite), como Instagram sin API.
-  Antes, sin worker, LinkedIn iba a n8n, que acusaba recibo sin publicar.
+  `DATA_DIRECTORY/linkedin-oauth.json` y dura 60 dias. Antes, sin worker, LinkedIn
+  iba a n8n, que acusaba recibo sin publicar.
+- Articulos de LinkedIn y textos de mas de 3.000 caracteres (la API no los admite) los
+  publica el robot del Mac: Flow los deja en cola (`robot_queued`) y
+  `robot-redes/robot.mjs --publicar` los recoge con `ESTADISTICAS_ROBOT_TOKEN`
+  (`/api/publications/posts-robot/linkedin`), los escribe en «Escribir articulo» con el
+  Chrome y la sesion de Roberto (titulo = primera linea, portada = la imagen) y avisa
+  del resultado. `robot-redes/instalar-publicador.command` deja el Mac mirando la cola
+  cada 10 minutos; `publicar-linkedin.command` lo lanza a mano. Si falla, el articulo
+  vuelve a "a mano" con el motivo, y un intento cortado no se repite solo.
 - Publica en Pinterest si la API esta configurada.
 - Publica en YouTube si OAuth esta configurado.
 - Prepara TikTok de forma asistida.

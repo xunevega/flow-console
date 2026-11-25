@@ -9,6 +9,10 @@
 //
 // Uso: doble clic en estadisticas-redes.command (o lo lanza el aviso del día 1 de cada mes).
 // Opciones: --solo=linkedin | --solo=instagram
+//
+// --publicar: publica en LinkedIn los artículos que Flow tiene en cola (la API oficial no publica
+// artículos). Si no hay ninguno, sale sin abrir Chrome. Lo lanza cada 10 minutos el agente que
+// instala instalar-publicador.command; a mano, doble clic en publicar-linkedin.command.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -22,7 +26,11 @@ const SOLO = (process.argv.find((a) => a.startsWith("--solo=")) || "").split("="
 // --textos: no mide nada; guarda el texto de tus publicaciones de LinkedIn en textos-linkedin.json
 // para elegir cuáles van a MI VOZ como ejemplos de cómo escribes.
 const TEXTOS = process.argv.includes("--textos");
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const PUBLICAR = process.argv.includes("--publicar");
+const CHROME = process.env.ROBOT_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+// Solo para pruebas: otra dirección en vez de LinkedIn y argumentos extra para Chrome.
+const LINKEDIN = process.env.ROBOT_LINKEDIN_URL || "https://www.linkedin.com";
+const CHROME_EXTRA = (process.env.ROBOT_CHROME_ARGS || "").split(" ").filter(Boolean);
 const PUERTO = 9333;
 const ESPERA_LOGIN_MS = 15 * 60 * 1000;
 const DIAS_INSTAGRAM = 60;
@@ -40,6 +48,7 @@ async function abrirChrome() {
     "--no-default-browser-check",
     "--window-size=1280,900",
     "--lang=es-ES",
+    ...CHROME_EXTRA,
     "about:blank",
   ], { stdio: "ignore", detached: false });
   for (let i = 0; i < 60; i += 1) {
@@ -371,15 +380,214 @@ async function instagram(p) {
   return `Instagram: ${guardadas} publicaciones`;
 }
 
+// ───────────────────────── LinkedIn: publicar artículos en cola ─────────────────────────
+
+async function flowRobot(ruta, opciones = {}) {
+  const r = await fetch(`${FLOW}/api/publications/posts-robot/linkedin${ruta}`, {
+    ...opciones,
+    headers: { "Content-Type": "application/json", "X-Robot-Token": TOKEN, ...(opciones.headers || {}) },
+    signal: AbortSignal.timeout(60000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Flow respondió ${r.status}`);
+  return j;
+}
+
+const avisarFlow = (id, estado, extra = {}) => flowRobot(`/${encodeURIComponent(id)}`, {
+  method: "POST",
+  body: JSON.stringify({ estado, ...extra }),
+});
+
+// Busca un campo del editor por su placeholder o etiqueta y devuelve su posición (o null).
+async function marcarCampo(p, tipo) {
+  return p.evaluar(`
+    const visible = (e) => e && e.offsetParent !== null && e.getBoundingClientRect().height > 10;
+    const etiqueta = (e) => [e.getAttribute("placeholder"), e.getAttribute("aria-label"), e.getAttribute("data-placeholder"), e.id, e.className]
+      .filter(Boolean).join(" ");
+    document.querySelectorAll("[data-flow-robot]").forEach((e) => e.removeAttribute("data-flow-robot"));
+    const campos = [...document.querySelectorAll("textarea, input[type=text], [contenteditable=true], [contenteditable=''], [role=textbox]")].filter(visible);
+    let el;
+    if (${JSON.stringify(tipo)} === "titulo") {
+      el = campos.find((e) => /t[ií]tulo|title|headline/i.test(etiqueta(e)));
+    } else {
+      const editables = campos.filter((e) => e.isContentEditable && !/t[ií]tulo|title|headline/i.test(etiqueta(e)));
+      el = editables.find((e) => /escrib|write|contenido|content|cuerpo|body|ql-editor|editor/i.test(etiqueta(e)))
+        || editables.sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0];
+    }
+    if (!el) return null;
+    el.setAttribute("data-flow-robot", ${JSON.stringify(tipo)});
+    el.scrollIntoView({ block: "center" });
+    el.focus();
+    return true;`);
+}
+
+async function escribirTitulo(p, cdp, titulo) {
+  for (let i = 0; i < 30; i += 1) {
+    if (await marcarCampo(p, "titulo")) break;
+    if (i === 29) throw new Error("no encuentro el campo del título en el editor de artículos");
+    await pausa(1000);
+  }
+  await cdp.enviar("Input.insertText", { text: titulo });
+  await pausa(600, 1000);
+}
+
+// Pega el cuerpo como lo pegarías tú (con formato si hay HTML) y comprueba que ha entrado.
+async function escribirCuerpo(p, cdp, cuerpo, html) {
+  if (!(await marcarCampo(p, "cuerpo"))) throw new Error("no encuentro el cuerpo del artículo en el editor");
+  const largo = () => p.evaluar(`return (document.querySelector("[data-flow-robot=cuerpo]")?.innerText || "").trim().length`);
+  const objetivo = Math.min(cuerpo.length, 200) * 0.6;
+  const intentos = [
+    `const dt = new DataTransfer();
+     dt.setData("text/plain", ${JSON.stringify(cuerpo)});
+     ${html ? `dt.setData("text/html", ${JSON.stringify(html)});` : ""}
+     const el = document.querySelector("[data-flow-robot=cuerpo]");
+     el.focus();
+     el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+     return true;`,
+    html ? `document.querySelector("[data-flow-robot=cuerpo]").focus(); return document.execCommand("insertHTML", false, ${JSON.stringify(html)});` : "",
+  ].filter(Boolean);
+  for (const js of intentos) {
+    await p.evaluar(js).catch(() => {});
+    await pausa(1500);
+    if ((await largo()) >= objetivo) return;
+  }
+  // Último recurso: escribirlo como texto, párrafo a párrafo.
+  await marcarCampo(p, "cuerpo");
+  const parrafos = cuerpo.split(/\n+/).filter((x) => x.trim());
+  for (const [i, parrafo] of parrafos.entries()) {
+    await cdp.enviar("Input.insertText", { text: parrafo });
+    if (i < parrafos.length - 1) {
+      await cdp.enviar("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+      await cdp.enviar("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    }
+  }
+  await pausa(1500);
+  if ((await largo()) < objetivo) throw new Error("el texto no entró en el editor");
+}
+
+// Portada: la baja a descargas/ y la mete en el selector de archivos del editor.
+async function ponerPortada(p, cdp, url, id) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(60000) });
+  if (!r.ok) throw new Error(`no se pudo bajar la imagen (${r.status})`);
+  const tipo = String(r.headers.get("content-type") || "");
+  const ext = /png/.test(tipo) ? "png" : /gif/.test(tipo) ? "gif" : "jpg";
+  const carpeta = path.join(DIR, "descargas");
+  fs.mkdirSync(carpeta, { recursive: true });
+  const archivo = path.join(carpeta, `portada-${id}.${ext}`);
+  fs.writeFileSync(archivo, Buffer.from(await r.arrayBuffer()));
+  let hay = await p.hay("input[type=file]");
+  if (!hay) {
+    await p.pulsarTexto("subir desde (el )?ordenador|upload from computer|a[ñn]adir (una )?(imagen|portada)|add (a )?cover|cover image|imagen de portada");
+    await pausa(1500, 2500);
+    hay = await p.hay("input[type=file]");
+  }
+  if (!hay) throw new Error("no encuentro dónde subir la portada");
+  const { root } = await cdp.enviar("DOM.getDocument", { depth: -1, pierce: true });
+  const { nodeId } = await cdp.enviar("DOM.querySelector", { nodeId: root.nodeId, selector: "input[type=file]" });
+  await cdp.enviar("DOM.setFileInputFiles", { nodeId, files: [archivo] });
+  await pausa(4000, 6000);
+  // Algunos editores abren un diálogo para recortar: se acepta.
+  await p.pulsarTexto("^(siguiente|next|listo|hecho|done|aplicar|apply|guardar|save)$").catch(() => {});
+  await pausa(2000, 3000);
+}
+
+async function urlDelArticulo(p) {
+  return p.evaluar(`
+    if (location.href.includes("/pulse/")) return location.href.split("?")[0];
+    const a = [...document.querySelectorAll("a[href*='/pulse/']")].find((e) => e.offsetParent !== null);
+    return a ? a.href.split("?")[0] : "";`).catch(() => "");
+}
+
+async function publicarUno(p, cdp, a) {
+  await avisarFlow(a.id, "publicando");
+  await p.ir(`${LINKEDIN}/article/new/`);
+  const dentro = async () => !/\/(login|checkpoint|authwall|uas\/login|signup)/.test(await p.url())
+    && !(await p.hay("input#username, input[name='session_key']"));
+  if (!(await dentro())) {
+    if (!(await esperarSesion(p, "LinkedIn", dentro))) throw new Error("no se inició sesión en LinkedIn a tiempo");
+    await p.ir(`${LINKEDIN}/article/new/`);
+  }
+  await pausa(4000, 6000);
+  await franja(p, `Flow · Escribiendo el artículo «${a.titulo.slice(0, 60)}»… no toques esta ventana.`);
+  await escribirTitulo(p, cdp, a.titulo);
+  await escribirCuerpo(p, cdp, a.cuerpo, a.html);
+  let sinPortada = "";
+  if (a.imagen) {
+    try {
+      await ponerPortada(p, cdp, a.imagen, a.id);
+    } catch (e) {
+      sinPortada = e.message;
+      log(`  portada: ${e.message} (sigo sin portada)`);
+    }
+  }
+  await pausa(3000, 4000); // que LinkedIn guarde el borrador
+  await quitarFranja(p);
+  // «Siguiente» abre el diálogo de compartir; ahí está «Publicar».
+  if (!(await p.pulsarTexto("^(siguiente|next|publicar|publish)$"))) throw new Error("no encuentro el botón Siguiente/Publicar");
+  await pausa(3000, 5000);
+  await p.evaluar(`
+    const d = [...document.querySelectorAll("[role=dialog]")].find((e) => e.offsetParent !== null);
+    const b = d && [...d.querySelectorAll("button")].find((e) => /^(publicar|publish)$/i.test((e.innerText || "").trim()) && !e.disabled);
+    if (b) b.click();
+    return !!b;`).catch(() => false);
+  // Esperar a que LinkedIn confirme: la página del artículo, un enlace /pulse/ o un aviso de publicado.
+  for (let i = 0; i < 40; i += 1) {
+    await pausa(1500);
+    const url = await urlDelArticulo(p);
+    if (url) return { url, sinPortada };
+    const confirmado = await p.evaluar(`return /(art[ií]culo|article).{0,40}(publicad|published)|se ha publicado|has been published/i.test(document.body.innerText || "")`).catch(() => false);
+    if (confirmado) return { url: "", sinPortada };
+  }
+  const foto = await p.captura().catch(() => "");
+  if (foto) fs.writeFileSync(path.join(DIR, "descargas", `fallo-${a.id}.png`), Buffer.from(foto, "base64"));
+  throw new Error("LinkedIn no confirmó la publicación (queda como borrador en tus artículos de LinkedIn)");
+}
+
+async function publicarArticulos(p, cdp, articulos) {
+  let hechos = 0;
+  for (const a of articulos) {
+    // Si un intento anterior se quedó a medias, puede que saliera: mejor que lo mire Roberto.
+    if (a.intentos >= 1) {
+      await avisarFlow(a.id, "fallo", { error: "un intento anterior se cortó; mira en LinkedIn si salió antes de repetir" }).catch(() => {});
+      continue;
+    }
+    try {
+      log(`LinkedIn: publicando «${a.titulo}»…`);
+      const { url, sinPortada } = await publicarUno(p, cdp, a);
+      await avisarFlow(a.id, "publicado", { url });
+      hechos += 1;
+      log(`  publicado ${url || "(sin enlace)"}${sinPortada ? ` · sin portada: ${sinPortada}` : ""}`);
+    } catch (e) {
+      log(`  no se pudo: ${e.message}`);
+      await avisarFlow(a.id, "fallo", { error: e.message }).catch(() => {});
+    }
+    await pausa(5000, 9000);
+  }
+  return `LinkedIn: ${hechos} de ${articulos.length} artículos publicados`;
+}
+
 // ───────────────────────── principal ─────────────────────────
+
+let enCola = [];
+if (PUBLICAR) {
+  enCola = (await flowRobot("")).articulos || [];
+  if (!enCola.length) {
+    log("Publicar: no hay artículos en cola.");
+    process.exit(0);
+  }
+}
 
 const { chrome, ws } = await abrirChrome();
 const cdp = conectar(ws);
 await cdp.listo;
 await cdp.enviar("Page.enable");
+await cdp.enviar("DOM.enable");
 const p = pagina(cdp);
 const resumen = [];
-for (const [nombre, fn] of TEXTOS ? [["linkedin", textosLinkedin]] : [["linkedin", linkedin], ["instagram", instagram]]) {
+const tareas = PUBLICAR
+  ? [["linkedin", (pg) => publicarArticulos(pg, cdp, enCola)]]
+  : TEXTOS ? [["linkedin", textosLinkedin]] : [["linkedin", linkedin], ["instagram", instagram]];
+for (const [nombre, fn] of tareas) {
   if (SOLO && SOLO !== nombre) continue;
   try {
     resumen.push(await fn(p));

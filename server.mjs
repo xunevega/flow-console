@@ -11,6 +11,7 @@ import express from "express";
 import pg from "pg";
 import { PDFParse } from "pdf-parse";
 import { createLinkedIn, LINKEDIN_POST_MAX, linkedinVaAMano } from "./linkedin.mjs";
+import { montarRobotLinkedin, ROBOT_QUEUED } from "./robot-linkedin.mjs";
 import { publicarEnInstagram, instagramApiConfigurada } from "./instagram-api.mjs";
 import { montarVisibilidad } from "./visibilidad.mjs";
 import { montarMiVoz, instruccionVoz } from "./mivoz.mjs";
@@ -322,6 +323,7 @@ function jsonMutationFilesForRequest(req) {
     pathName === "/api/publications/post"
     || pathName === "/api/instagram/post"
     || /^\/api\/publications\/posts\/[^/]+\/confirm$/.test(pathName)
+    || /^\/api\/publications\/posts-robot\/linkedin\/[^/]+$/.test(pathName)
     || /^\/api\/calendar\/tasks\/[^/]+\/prepare-instagram$/.test(pathName)
   ) {
     add(calendarTasksFile);
@@ -3599,6 +3601,7 @@ function deliveryModeForPublication(post = {}) {
   if (resultMode === "youtube_data_api") return "API";
   if (resultMode === "pinterest_api") return "API";
   if (resultMode === "linkedin_api") return "API";
+  if (resultMode === "robot_mac") return "robot Mac";
   if (resultMode === "instagram_api") return "API";
   if (resultMode === "manual") return "a mano";
   if (targetId === "blog") return "API";
@@ -3636,7 +3639,7 @@ async function publicationPreflight(payload, workerHealth = null) {
     if (linkedinVaAMano(payload)) {
       // La API no publica artículos ni posts de más de 3.000 caracteres: va a mano, como Instagram.
       const length = String(payload?.caption || "").trim().length;
-      warn("linkedin", "LinkedIn a mano", `${payload?.options?.linkedinMode === "article" ? "La API oficial no publica artículos" : `Tiene ${length} caracteres y un post admite ${LINKEDIN_POST_MAX}`}. Flow lo deja pendiente: cópialo, publícalo en LinkedIn con «Escribir artículo» y luego confirma aquí que está publicado.`);
+      warn("linkedin", "Artículo: lo publica el robot del Mac", `${payload?.options?.linkedinMode === "article" ? "La API oficial no publica artículos" : `Tiene ${length} caracteres y un post admite ${LINKEDIN_POST_MAX}`}. Queda en cola y el robot del Mac lo publica como artículo (título = primera línea) en unos minutos si el Mac está encendido. Si falla, queda para hacerlo a mano.`);
     } else {
       const connect = { label: "CONECTAR LINKEDIN", href: "/oauth/linkedin/start" };
       const status = await linkedin.status();
@@ -4462,9 +4465,9 @@ async function publishPublicationPayload(payload, source = "flow-console") {
     return publishWithExternalWorker(payload, "/linkedin/publish");
   }
   if (payload?.target?.id === "linkedin") {
-    // Sin worker: posts por la API oficial; artículos y textos largos, a mano.
+    // Sin worker: posts por la API oficial; artículos y textos largos, al robot del Mac.
     // Nunca por n8n: su webhook acusaba recibo sin publicar nada.
-    if (linkedinVaAMano(payload)) return { ok: true, status: "manual_pending_confirmation", deliveryMode: "manual" };
+    if (linkedinVaAMano(payload)) return { ok: true, status: ROBOT_QUEUED, deliveryMode: "robot_mac" };
     return linkedin.publish(payload);
   }
   if (payload?.target?.id === "tiktok" && publicationExternalWorkerUrl) {
@@ -6008,6 +6011,16 @@ app.get("/oauth/linkedin/callback", async (req, res) => {
   } catch (error) {
     res.status(error.status || 500).type("html").send(linkedinOAuthPage("No se pudo conectar LinkedIn", `<p>${escapeHtml(error.message)}</p>`));
   }
+});
+
+montarRobotLinkedin(app, {
+  readPublicationPosts,
+  writePublicationPosts,
+  publicOrigin,
+  alPublicar: async (post) => {
+    await rememberPublishedCalendarTask(post).catch(() => {});
+    await rememberPublicationInTraining(post);
+  },
 });
 
 app.get("/api/oauth/linkedin/status", requireAuth, async (_, res) => {

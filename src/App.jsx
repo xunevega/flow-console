@@ -813,6 +813,8 @@ function publicationStatusLabel(status, action, targetId = "") {
   if (targetId === "pinterest" && value === "created_on_pinterest") return "Publicado en Pinterest";
   if (targetId === "tiktok" && value === "pending_confirmation") return "Preparado para revisar";
   if (targetId === "instagram" && value === "pending_confirmation") return "Listo para publicar en la app";
+  if (value === "robot_queued") return "En cola: lo publica el robot del Mac";
+  if (value === "robot_publishing") return "El robot del Mac lo está publicando";
   if (isConfirmedPublicationStatus(value)) return "Publicado";
   if (value === "pending_confirmation") return "Publicación no confirmada";
   if (action === "schedule" || value === "scheduled") return "Programado";
@@ -844,6 +846,9 @@ function publicationResultMessage(action, post, targetName) {
   }
   if (targetId === "instagram" && post?.deliveryMode === "a mano") {
     return "Listo para Instagram. En el historial: Descargar, Copiar texto y, cuando lo publiques en la app, Ya publicado.";
+  }
+  if (status === "robot_queued") {
+    return "Artículo en cola. El robot del Mac lo publicará en LinkedIn en unos minutos (con el Mac encendido) y aquí pondrá el enlace.";
   }
   if (isConfirmedPublicationStatus(status)) {
     return url ? `Publicado en ${targetName}: ${url}` : `Publicado en ${targetName}.`;
@@ -6469,6 +6474,10 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                         </div>
                       </header>
                       {post.caption ? <p className="draft-snippet">{post.caption}</p> : null}
+                      {post.lastError ? <p className="draft-snippet">{post.lastError}</p> : null}
+                      {(post.publicUrl || post.finalUrl) && isConfirmedPublicationStatus(post.status) ? (
+                        <p className="draft-snippet"><a href={post.publicUrl || post.finalUrl} target="_blank" rel="noreferrer">Ver publicación</a></p>
+                      ) : null}
                       {post.training?.learned ? (
                         <p className="draft-snippet">Aprendida en {post.training.source === "editorial-brain" ? "el cerebro editorial" : "la memoria local"}.</p>
                       ) : post.training?.error ? (
