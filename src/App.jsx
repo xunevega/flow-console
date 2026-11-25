@@ -828,6 +828,12 @@ function publicationStatusLabel(status, action, targetId = "") {
   return value || "Registrado";
 }
 
+// Fecha de una entrada del historial; sin fecha guardada, no se inventa la de ahora.
+function publicationDateLabel(post) {
+  const value = post?.scheduledAt || post?.publishedAt || post?.createdAt;
+  return value ? ` · ${new Date(value).toLocaleString("es-ES")}` : "";
+}
+
 function publicationResultMessage(action, post, targetName) {
   if (action === "draft") return `Borrador guardado en ${targetName}. No aprende hasta publicar o confirmar.`;
   if (action === "schedule") return `Entrega programada en ${targetName}. Aprenderá cuando quede publicada o confirmada.`;
@@ -6457,7 +6463,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                       <header>
                         <div>
                           <strong>{post.target?.name || post.targetId || "Destino"}</strong>
-                          <span>{publicationStatusLabel(post.status, post.action, post.target?.id || post.targetId)} · {new Date(post.scheduledAt || post.publishedAt || post.createdAt || Date.now()).toLocaleString("es-ES")}</span>
+                          <span>{publicationStatusLabel(post.status, post.action, post.target?.id || post.targetId)}{publicationDateLabel(post)}</span>
                         </div>
                         <div className="history-row-actions">
                           {post.deliveryMode === "a mano" && isPublicationAwaitingConfirmation(post.status) && (post.videoUrl || post.imageUrl) && (
