@@ -204,6 +204,9 @@ app.use((req, res, next) => {
     || pathName === "/api/estadisticas/linkedin"
     || pathName === "/api/estadisticas/captura"
     || /^\/api\/publications\/posts\/[^/]+\/media$/.test(pathName)
+    // Un artículo pegado con imágenes dentro (captionHtml) pasa de 2 MB y se perdía con un 413.
+    || pathName === "/api/publications/post"
+    || pathName === "/api/instagram/post"
   );
   // El robot del Mac no tiene sesión: entra con su propia clave (se comprueba en estadisticas.mjs).
   if (req.method === "POST" && pathName === "/api/estadisticas/robot") return robotJsonParser(req, res, next);
