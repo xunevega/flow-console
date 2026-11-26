@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [editorial-distribution]
+    branches: [main, editorial-distribution, editorial-functional-check]
 permissions:
   contents: read
 jobs:
@@ -17,3 +17,4 @@ jobs:
       - run: npm ci
       - run: node --check server.mjs
       - run: npm run build
+      - run: node scripts/test-editorial.mjs
