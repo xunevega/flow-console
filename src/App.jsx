@@ -4928,6 +4928,34 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const [tiktokMode, setTiktokMode] = useState("draft");
   const [posts, setPosts] = useState([]);
   const [manualUrls, setManualUrls] = useState({});
+  const [masters, setMasters] = useState([]);
+  const [masterId, setMasterId] = useState("");
+  const [masterTitle, setMasterTitle] = useState("");
+  const [editorialFormat, setEditorialFormat] = useState("post");
+  useEffect(() => {
+    api("/editorial/masters").then(result => setMasters(result.masters || [])).catch(error => setError(error.message));
+  }, []);
+  async function approveMaster() {
+    setBusy("master");
+    setError("");
+    try {
+      const result = await api("/editorial/masters", { method: "POST", body: JSON.stringify({ title: masterTitle, caption, captionHtml, imageUrl }) });
+      setMasters(current => [result.master, ...current]);
+      setMasterId(result.master.id);
+      setMessage("Original aprobado y guardado. Las versiones posteriores no lo modifican.");
+    } catch (error) { setError(error.message); }
+    finally { setBusy(""); }
+  }
+  function loadMaster(id) {
+    setMasterId(id);
+    const master = masters.find(item => item.id === id);
+    if (!master) return;
+    setMasterTitle(master.title);
+    setCaption(master.caption);
+    setCaptionHtml(sanitizeCaptionHtml(master.captionHtml || generatedTextToCaptionHtml(master.caption)));
+    setImageUrl(master.imageUrl || "");
+    setMediaSource(null);
+  }
   const [savedDraft, setSavedDraft] = useState(readPublicationDraft);
   const [blogArticles, setBlogArticles] = useState([]);
   const [blogArticleDraft, setBlogArticleDraft] = useState({
@@ -5041,6 +5069,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           action: "publish",
           targetId: selectedTarget.id,
           target: selectedTarget,
+          masterId,
+          editorialFormat,
           caption,
           imageUrl: mediaUrl,
           videoUrl: ["youtube", "tiktok"].includes(selectedTarget.id) ? mediaUrl : "",
@@ -5312,7 +5342,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           },
         }),
       });
-	      setPosts((current) => [result.post, ...current].slice(0, 8));
+	      setPosts((current) => [result.post, ...current.filter(post => post.id !== result.post.id)]);
 	      onPublicationSaved?.();
 	      const learnedSignals = result.memory ? publicationLearningSignals(result.post) : [];
 	      setMessage([
@@ -5344,6 +5374,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     return {
       targetId: selectedTarget.id,
       targetName: selectedTarget.name,
+      masterId,
+      masterTitle,
+      editorialFormat,
       caption,
       captionHtml,
       imageUrl,
@@ -5370,6 +5403,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     const draft = savedDraft || readPublicationDraft();
     if (!draft) return;
     setSelectedTargetId(draft.targetId || "instagram");
+    setMasterId(draft.masterId || "");
+    setMasterTitle(draft.masterTitle || "");
+    setEditorialFormat(draft.editorialFormat || "post");
     setCaption(String(draft.caption || ""));
     setCaptionHtml(String(draft.captionHtml || ""));
     setImageUrl(String(draft.imageUrl || ""));
@@ -5394,6 +5430,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   }
 
   function reset() {
+    setMasterId("");
+    setMasterTitle("");
+    setEditorialFormat("post");
     setCaption("");
     setCaptionHtml("");
     setImageUrl("");
@@ -5784,6 +5823,26 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                     </div>
                   </div>
                 )}
+                <div className="blog-article-fields">
+                  <label>Artículo maestro
+                    <select value={masterId} onChange={event => loadMaster(event.target.value)}>
+                      <option value="">Sin vincular</option>
+                      {masters.map(master => <option key={master.id} value={master.id}>{master.title}</option>)}
+                    </select>
+                  </label>
+                  <label>Título editorial
+                    <input value={masterTitle} onChange={event => setMasterTitle(event.target.value)} placeholder="Título del original" />
+                  </label>
+                  <Button type="button" disabled={Boolean(busy) || !masterTitle.trim() || !caption.trim()} onClick={approveMaster}>APROBAR COMO NUEVO ORIGINAL</Button>
+                  <label>Formato
+                    <select value={editorialFormat} onChange={event => setEditorialFormat(event.target.value)}>
+                      <option value="post">Publicación breve</option>
+                      <option value="article">Artículo</option>
+                      <option value="newsletter">Newsletter</option>
+                    </select>
+                  </label>
+                  {masterId && <p>Versión vinculada. Editar este texto no modifica el original.</p>}
+                </div>
                 <FormattedTextarea
                   className="instagram-caption"
                   value={caption}
@@ -6591,6 +6650,44 @@ function GoogleAdsWizard() {
   );
 }
 
+function EditorialMetrics({ year, month }) {
+  const period = year + "-" + String(month).padStart(2, "0");
+  const [entries, setEntries] = useState([]);
+  const [channel, setChannel] = useState("Substack");
+  const [values, setValues] = useState({});
+  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api("/editorial/metrics").then(result => setEntries(result.entries || [])).catch(error => setStatus(error.message));
+  }, []);
+  useEffect(() => {
+    setValues(entries.find(row => row.period === period && row.channel === channel) || {});
+  }, [entries, period, channel]);
+  async function save(event) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const result = await api("/editorial/metrics", { method: "PUT", body: JSON.stringify({ ...values, period, channel }) });
+      setEntries(result.entries || []);
+      setStatus("Datos guardados.");
+    } catch (error) { setStatus(error.message); }
+    finally { setSaving(false); }
+  }
+  return <form className="panel stats-editor" onSubmit={save}>
+    <div className="panel-heading"><div><strong>Audiencia e ingresos</strong><small>Datos manuales de la plataforma. Vacío significa desconocido.</small></div></div>
+    <div className="blog-article-fields">
+      <label>Canal<select value={channel} onChange={event => setChannel(event.target.value)}>
+        {["Substack", "LinkedIn Newsletter", "Medium", "Reddit", "Substack Notes", "LinkedIn", "Pinterest", "Blog"].map(name => <option key={name}>{name}</option>)}
+      </select></label>
+      {Object.entries({ freeSubscribers: "Suscriptores gratuitos al cierre", paidSubscribers: "Suscriptores de pago al cierre", revenue: "Ingresos del mes (€)", leads: "Oportunidades comerciales del mes" }).map(([key, label]) =>
+        <label key={key}>{label}<input type="number" min="0" step={key === "revenue" ? "0.01" : "1"} value={values[key] ?? ""} onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} /></label>
+      )}
+    </div>
+    <Button disabled={saving}>GUARDAR AUDIENCIA</Button>
+    <p role="status">{status}</p>
+  </form>;
+}
+
 function StatsDashboard() {
   const campaignBuilderRef = useRef(null);
   const currentYear = new Date().getFullYear();
@@ -6965,6 +7062,7 @@ function StatsDashboard() {
             </footer>
           </form>
 
+          <EditorialMetrics year={selectedYear} month={selectedMonth} />
           <section className="panel stats-year">
             <div className="panel-heading">
               <span className="section-mark" />
