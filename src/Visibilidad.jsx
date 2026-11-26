@@ -32,6 +32,7 @@ function Estado({ ok, si, no }) {
 function Version({ red, nombre, textoVersion, titulo, api, avisar, articulo, imagen }) {
   const [texto, setTexto] = useState(textoVersion);
   const [media, setMedia] = useState(articulo.medios?.[red] || "");
+  useEffect(()=>setMedia(articulo.medios?.[red]||""),[articulo.medios?.[red],red]);
   const [enlace, setEnlace] = useState(articulo.enlaces?.[red] || "");
   const [trabajando,setTrabajando] = useState(false);
   useEffect(()=>setTexto(textoVersion),[textoVersion]);
@@ -141,7 +142,24 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
     try {
       if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,imagen})});
       const r=await api(`/visibilidad/borradores/${b.id}/versiones`,{method:"POST",body:JSON.stringify({canales:elegidos})});
+      const errores=[];
+      if(imagen){
+        const cache=new Map();
+        for(const red of elegidos.filter(k=>!VIDEO.has(k)&&r.versiones?.[k])){
+          try{
+            const formato=(FORMATOS[red]||FORMATOS.blog).join("x");
+            if(!cache.has(formato)){
+              const dataUrl=await adaptarImagen(imagen,red);
+              const media=await api("/publications/media",{method:"POST",body:JSON.stringify({dataUrl,type:"image/jpeg",name:formato+".jpg",targetId:"blog"})});
+              if(!media.fileName)throw new Error("Subida sin archivo");
+              cache.set(formato,media.fileName);
+            }
+            await api(`/visibilidad/borradores/${b.id}/medios/${red}`,{method:"PUT",body:JSON.stringify({nombre:cache.get(formato)})});
+          }catch(e){errores.push(red+": "+e.message);}
+        }
+      }
       await recargar();
+      if(errores.length){avisar("Textos preparados; imágenes pendientes: "+errores.join("; "),true);return;}
       avisar(r.errorVersiones ? "Faltan versiones: "+r.errorVersiones : "Versiones preparadas. Todavía no se han publicado.",Boolean(r.errorVersiones));
     }catch(e){avisar(e.message,true);}finally{setOcupado("");}
   };
