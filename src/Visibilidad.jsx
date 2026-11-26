@@ -123,11 +123,12 @@ function Recomendaciones({lista,redes}) {
   if(!lista?.length)return null;
   return <div className="vis-lista">{lista.map(r=><article key={r.canal}><b>{redes[r.canal]||r.canal} · {PRIORIDAD[r.prioridad]}</b><p>{r.motivo}</p><small>{[r.formato,r.momento].filter(Boolean).join(" · ")}</small></article>)}</div>;
 }
-function Borrador({ b, fichas, redes, api, recargar, avisar }) {
+function Borrador({ b, fichas, redes, api, recargar, avisar, Editor, markdownToHtml }) {
   const [abierto, setAbierto] = useState(b.estado !== "publicado");
   const [titulo, setTitulo] = useState(b.titulo);
   const [descripcion, setDescripcion] = useState(b.descripcion);
   const [cuerpo, setCuerpo] = useState(b.cuerpo);
+  const [cuerpoHtml, setCuerpoHtml] = useState(()=>b.cuerpoHtml || (b.cuerpo ? markdownToHtml(b.cuerpo) : ""));
   const [imagen, setImagen] = useState(b.imagen || "");
   const [biblioteca, setBiblioteca] = useState([]);
   const [recomendaciones,setRecomendaciones]=useState(b.recomendaciones||[]);
@@ -135,7 +136,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const recomendar = async () => {
     setOcupado("recomendaciones");
     try {
-      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,imagen})});
+      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,cuerpoHtml,imagen})});
       const r=await api(`/visibilidad/borradores/${b.id}/recomendaciones`,{method:"POST"});
       setRecomendaciones(r.recomendaciones);setElegidos(sugeridos(r.recomendaciones));
       avisar("Recomendaciones editoriales preparadas.");
@@ -144,7 +145,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const preparar = async () => {
     setOcupado("versiones");
     try {
-      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,imagen})});
+      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,cuerpoHtml,imagen})});
       const r=await api(`/visibilidad/borradores/${b.id}/versiones`,{method:"POST",body:JSON.stringify({canales:elegidos})});
       const errores=[];
       if(imagen){
@@ -187,13 +188,13 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
     } catch (error) { avisar(error.message,true); } finally { setOcupado(""); }
   };
   const [ocupado, setOcupado] = useState("");
-  const cambiado = titulo !== b.titulo || descripcion !== b.descripcion || cuerpo !== b.cuerpo || imagen !== (b.imagen || "");
+  const cambiado = titulo !== b.titulo || descripcion !== b.descripcion || cuerpo !== b.cuerpo || cuerpoHtml !== (b.cuerpoHtml || (b.cuerpo ? markdownToHtml(b.cuerpo) : "")) || imagen !== (b.imagen || "");
   const ficha = fichas.find((f) => f.id === b.producto);
 
   const guardar = async () => {
     setOcupado("guardar");
     try {
-      await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, imagen }) });
+      await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, cuerpoHtml, imagen }) });
       await recargar();
       avisar("Guardado.");
     } catch (error) {
@@ -206,7 +207,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
     if (!window.confirm(`¿Publicar «${titulo}» en el blog de aeternal-flow.es?`)) return;
     setOcupado("publicar");
     try {
-      if (cambiado) await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, imagen }) });
+      if (cambiado) await api(`/visibilidad/borradores/${b.id}`, { method: "PATCH", body: JSON.stringify({ titulo, descripcion, cuerpo, cuerpoHtml, imagen }) });
       const r = await api(`/visibilidad/borradores/${b.id}/publicar`, { method: "POST" });
       await recargar();
       avisar(`Publicado: ${r.url}`);
@@ -227,7 +228,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   };
 
   return (
-    <article className={`vis-borrador ${b.estado}`}>
+    <article id={"articulo-"+b.id} className={`vis-borrador ${b.estado}`}>
       <header onClick={() => setAbierto(!abierto)}>
         <div>
           <b>{b.titulo}</b>
@@ -244,7 +245,8 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
         <div className="vis-editor">
           <label>Título<input value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={160} /></label>
           <label>Descripción para Google <small>{descripcion.length}/160</small><textarea rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} maxLength={300} /></label>
-          <label>Artículo (Markdown)<textarea rows={18} value={cuerpo} onChange={(e) => setCuerpo(e.target.value)} /></label>
+          <div><label>Artículo original</label><Editor value={cuerpo} html={cuerpoHtml} onChange={setCuerpo} onHtmlChange={setCuerpoHtml} rows={18} placeholder="Escribe o pega tu artículo. Puedes insertar imágenes y dar formato al texto." /></div>
+          {b.evidencias?.length>0 && <Evidencias lista={b.evidencias}/>}
           <div>
               <small>Imagen de portada</small>
               <div className="vis-acciones">
@@ -332,12 +334,12 @@ function Fichas({ fichas, api, recargar, avisar }) {
   );
 }
 
-export default function Visibilidad({ api }) {
+export default function Visibilidad({ api, Editor, markdownToHtml }) {
   const [datos, setDatos] = useState(null);
   const [ocupado, setOcupado] = useState("");
   const [mensaje, setMensaje] = useState({ texto: "", error: false });
   const [tema, setTema] = useState("");
-  const [producto, setProducto] = useState("");
+
   const [vez, setVez] = useState(0);
 
   const avisar = (texto, error = false) => setMensaje({ texto, error });
@@ -367,12 +369,13 @@ export default function Visibilidad({ api }) {
   };
   const escribir = async (idea) => {
     setOcupado(idea.id || "tema");
-    avisar("Escribiendo el borrador… (tarda un minuto)");
+    avisar("Abriendo tu artículo…");
     try {
-      await api("/visibilidad/borradores", { method: "POST", body: JSON.stringify(idea) });
+      const articulo = await api("/visibilidad/articulos", { method: "POST", body: JSON.stringify({titulo:idea.titulo,ideaId:idea.id}) });
       await recargar();
       setTema("");
-      avisar("Borrador listo: revísalo abajo.");
+      avisar("Artículo listo para escribir.");
+      requestAnimationFrame(()=>document.getElementById("articulo-"+articulo.id)?.scrollIntoView({behavior:"smooth",block:"start"}));
     } catch (error) {
       avisar(error.message, true);
     } finally {
@@ -402,8 +405,8 @@ export default function Visibilidad({ api }) {
         </header>
 
         <p className="est-frase">
-          Flow consulta fuentes externas y las búsquedas de tu web cuando están conectadas. Las ideas con evidencia muestran sus enlaces; las demás son hipótesis editoriales.
-          También puedes escribir temas libres. Prepara los destinos antes de publicar y revisa cada versión.
+          Flow busca conversaciones y temas relevantes para tus conocimientos e intereses. Tú escribes el artículo y Flow prepara su distribución.
+          También puedes empezar un artículo sobre cualquier tema.
         </p>
 
         {mensaje.texto && <div className={`publication-feedback ${mensaje.error ? "error" : "success"}`}>{mensaje.texto}</div>}
@@ -423,13 +426,6 @@ export default function Visibilidad({ api }) {
                 {!(ideas.investigacion?.fuentes||[]).length && <small>Sin investigación externa registrada. Busca oportunidades nuevas.</small>}
                 {(ideas.investigacion?.fuentes||[]).map(f=><article key={f.id}><b>{f.nombre}</b><small> · {f.estado==="ok"?f.cantidad+" señales":f.estado==="sin_resultados"?"Sin resultados":"Error: "+f.error} · {new Date(f.consultado).toLocaleString("es-ES")}</small></article>)}
               </div>
-              {ideas.fecha && (
-                <p className="est-pie">
-                  {fecha(ideas.fecha)} · {ideas.fuentes?.busquedas || 0} consultas de nuestra web
-                  {ideas.fuentes?.google !== "ok" ? " · Google sin datos" : ""}
-                  {ideas.fuentes?.bing !== "ok" ? " · Bing sin datos" : ""}
-                </p>
-              )}
               {!ideas.lista?.length && <p className="est-vacio">Todavía no hay ideas. Pulsa «Buscar ideas nuevas» (Flow también lo hace solo una vez por semana).</p>}
               <div className="vis-ideas">
                 {(ideas.lista || []).map((idea) => (
@@ -439,19 +435,15 @@ export default function Visibilidad({ api }) {
                     <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}</small>
                     <p>{idea.porque}</p><Evidencias lista={idea.evidencias}/><Recomendaciones lista={idea.recomendaciones} redes={datos.redes||{}}/>
                     <button type="button" className="button ghost" onClick={() => escribir(idea)} disabled={Boolean(ocupado)}>
-                      {ocupado === idea.id ? "Escribiendo…" : "Escribir este"}
+                      {ocupado === idea.id ? "Abriendo…" : "Escribir mi artículo"}
                     </button>
                   </article>
                 ))}
               </div>
               <div className="vis-tema">
                 <input placeholder="O escribe tu propio tema…" value={tema} onChange={(e) => setTema(e.target.value)} />
-                <select value={producto} onChange={(e) => setProducto(e.target.value)}>
-                  <option value="">Sin producto</option>
-                  {fichas.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-                </select>
-                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim(), producto })}>
-                  {ocupado === "tema" ? "Escribiendo…" : "Escribir"}
+                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim() })}>
+                  {ocupado === "tema" ? "Abriendo…" : "Nuevo artículo"}
                 </button>
               </div>
             </section>
@@ -461,7 +453,7 @@ export default function Visibilidad({ api }) {
               {!datos.borradores.length && <p className="est-vacio">Aún no hay borradores.</p>}
               <div className="vis-borradores">
                 {datos.borradores.map((b) => (
-                  <Borrador key={`${b.id}-${b.actualizado}`} b={b} fichas={fichas} redes={datos.redes || {}} api={api} recargar={recargar} avisar={avisar} />
+                  <Borrador key={`${b.id}-${b.actualizado}`} b={b} Editor={Editor} markdownToHtml={markdownToHtml} fichas={fichas} redes={datos.redes || {}} api={api} recargar={recargar} avisar={avisar} />
                 ))}
               </div>
             </section>
