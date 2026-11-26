@@ -99,7 +99,16 @@ const disabledPublicationTargetIds = new Set([
   "face" + "book",
   "news" + "letter",
 ]);
+const manualEditorialTargets = [
+  { id: "substack", name: "Substack", kind: "newsletter", url: "https://substack.com/" },
+  { id: "substack-notes", name: "Substack Notes", kind: "publicación breve", url: "https://substack.com/notes" },
+  { id: "linkedin-newsletter", name: "LinkedIn Newsletter", kind: "newsletter", url: "https://www.linkedin.com/" },
+  { id: "medium", name: "Medium", kind: "artículo", url: "https://medium.com/new-story" },
+  { id: "reddit", name: "Reddit", kind: "comunidad", url: "https://www.reddit.com/" },
+];
+const manualEditorialTargetIds = new Set(manualEditorialTargets.map(target => target.id));
 const defaultPublicationTargets = [
+  ...manualEditorialTargets.map(target => ({ ...target, handle: target.url, color: "#4a7ab5", icon: "✎", webhookPath: "", builtIn: true })),
   {
     id: "instagram",
     name: "Instagram",
@@ -2688,6 +2697,7 @@ async function publicationPreflight(payload, workerHealth = null) {
   const ok = (id, label, detail = "") => add(id, label, "ok", detail);
   const warn = (id, label, detail = "") => add(id, label, "warn", detail);
   const block = (id, label, detail = "") => add(id, label, "block", detail);
+  if (manualEditorialTargetIds.has(targetId)) warn("manual", "Publicación manual", "Copia el contenido y publícalo en la plataforma; Flow no lo marcará como publicado automáticamente.");
   if (!String(payload?.caption || "").trim()) block("caption", "Falta texto", "Escribe un caption antes de publicar.");
   else ok("caption", "Texto OK", `${String(payload.caption || "").length} caracteres.`);
   if (targetId === "youtube") {
@@ -4546,7 +4556,8 @@ app.post("/api/publications/preflight", requireAuth, async (req, res) => {
   try {
     const targets = await readPublicationTargets();
     const requestedTargetId = String(req.body?.targetId || req.body?.target?.id || "instagram");
-    const target = targets.find((item) => item.id === requestedTargetId) || targets.find((item) => item.id === "instagram");
+    const target = targets.find((item) => item.id === requestedTargetId);
+    if (!target) return res.status(400).json({ error: "Destino de publicación desconocido" });
     const payload = cleanPublicationPayload({ ...req.body, action: req.body?.action || "publish", target });
     res.json({ ok: true, ...(await publicationPreflight(payload)) });
   } catch (error) {
@@ -5997,8 +6008,21 @@ app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) =>
     const index = posts.findIndex((post) => post.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Publicación no encontrada" });
     const now = new Date().toISOString();
+    const manual = manualEditorialTargetIds.has(posts[index].targetId || posts[index].target?.id);
+    let finalUrl = posts[index].finalUrl || "";
+    if (manual) {
+      try {
+        const url = new URL(String(req.body?.url || ""));
+        if (url.protocol !== "https:" || url.username || url.password) throw new Error("invalid");
+        finalUrl = url.href;
+      } catch {
+        return res.status(400).json({ error: "Indica la URL HTTPS de la publicación real." });
+      }
+    }
     const post = {
       ...posts[index],
+      finalUrl,
+      publicUrl: finalUrl || posts[index].publicUrl,
       action: "publish",
       status: "published_by_user_confirmation",
       publishedAt: posts[index].publishedAt || now,
@@ -6293,7 +6317,7 @@ async function handlePublicationSubmit(req, res) {
     if (["review", "schedule"].includes(payload.action) && !payload.scheduledAt) {
       return res.status(400).json({ error: "Elige una fecha válida para programar" });
     }
-    if (["schedule", "publish"].includes(payload.action) && !payload.target.webhookPath) {
+    if (["schedule", "publish"].includes(payload.action) && !payload.target.webhookPath && !(payload.action === "publish" && manualEditorialTargetIds.has(payload.target.id))) {
       return res.status(400).json({ error: `El destino ${payload.target.name} no tiene webhook n8n configurado` });
     }
 
@@ -6325,7 +6349,9 @@ async function handlePublicationSubmit(req, res) {
 
     let flowResult = null;
     if (payload.action === "publish") {
-      flowResult = await publishPublicationPayload(payload);
+      flowResult = manualEditorialTargetIds.has(payload.target.id)
+        ? { status: "pending_confirmation", deliveryMode: "manual", message: "Preparado; falta publicar y confirmar en la plataforma." }
+        : await publishPublicationPayload(payload);
     }
 
     const now = new Date().toISOString();
