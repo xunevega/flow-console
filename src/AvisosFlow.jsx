@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 // Avisos que genera Flow por su cuenta (avisos-flow.mjs): conversaciones donde aportar, ideas,
-// borradores esperando, enlaces rotos, MiBØ y el robot. Van encima de los avisos de n8n.
+// borradores esperando, enlaces rotos y el robot. Van encima de los avisos de n8n.
 
 const fecha = (iso) => (iso ? new Date(iso).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "nunca");
 const ETIQUETA = {
@@ -9,7 +9,6 @@ const ETIQUETA = {
   ideas: "Ideas",
   borradores: "Borradores",
   web: "Web",
-  mibo: "MiBØ",
   robot: "Robot",
   suscriptor: "Newsletter",
 };
@@ -114,7 +113,7 @@ export default function AvisosFlow({ api, ir }) {
         </div>
       </div>
       {error && <div className="publication-feedback error">{error}</div>}
-      {datos && !nuevos.length && <p className="est-vacio">Nada pendiente. Flow mira cada 2 horas foros, ideas, borradores y MiBØ, y la web una vez por semana.</p>}
+      {datos && !nuevos.length && <p className="est-vacio">Nada pendiente. Flow mira cada 2 horas foros, ideas y borradores, y la web una vez por semana.</p>}
       <div className="avf-lista">
         {nuevos.map((a) => <Aviso key={`${a.id}-${a.estado}`} a={a} api={api} recargar={recargar} ir={ir} />)}
       </div>

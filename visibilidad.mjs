@@ -13,7 +13,6 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { instruccionVoz, aprenderDeCorreccion } from "./mivoz.mjs";
-import { resumenParaEscribir, imagenesMibo, rutaImagen, contextoMibo } from "./desde-mibo.mjs";
 
 let d = null; // dependencias que pasa server.mjs
 let archivo = "";
@@ -54,20 +53,6 @@ export const FICHAS_INICIALES = [
     url: "https://panel-cobros.vercel.app/",
     para: "Profesionales y autónomos que llevan clientes, presupuestos, facturas y cobros en sitios distintos.",
     hechos: "Clientes, presupuestos, facturas, pagos, gastos y horas en una sola vista. React, API REST con FastAPI y PostgreSQL. En evolución.",
-  },
-  {
-    id: "mibo",
-    nombre: "MiBØ",
-    url: "https://aeternal-flow.es/mibo.php",
-    para: "Quien trabaja en un Mac con muchos proyectos a la vez y pierde el hilo.",
-    hechos: "Asistente personal de IA para macOS: memoria externa de escritorio que recuerda el contexto de cada día y automatiza tareas del Mac, siempre con aprobación.",
-  },
-  {
-    id: "mibo-deck",
-    nombre: "MiBØ Deck",
-    url: "https://aeternal-flow.es/productos/mibo-deck.html",
-    para: "Quien trabaja con Photoshop o Blender y quiere mandos físicos sin comprar un panel caro.",
-    hechos: "Convierte un móvil en un panel de control táctil para Photoshop y Blender: botones, capas y nodos a mano. Prototipo.",
   },
   {
     id: "el-mago",
@@ -118,9 +103,12 @@ async function leer() {
   try {
     const datos = JSON.parse(await fs.readFile(archivo, "utf8"));
     return {
-      fichas: Array.isArray(datos.fichas) && datos.fichas.length ? datos.fichas : FICHAS_INICIALES,
-      ideas: datos.ideas || { fecha: "", lista: [], fuentes: {} },
-      borradores: Array.isArray(datos.borradores) ? datos.borradores : [],
+      fichas: (Array.isArray(datos.fichas) && datos.fichas.length ? datos.fichas : FICHAS_INICIALES).filter(f => !/^mibo(?:-deck)?$/i.test(f.id)),
+      ideas: datos.ideas ? { ...datos.ideas, lista: (datos.ideas.lista || []).map(({proyectoMibo: _p, ...idea}) => idea), fuentes: Object.fromEntries(Object.entries(datos.ideas.fuentes || {}).filter(([key]) => key !== "mibo")) } : { fecha: "", lista: [], fuentes: {} },
+      borradores: Array.isArray(datos.borradores) ? datos.borradores.map(b => {
+        const { proyectoMibo: _proyecto, imagenes: _imagenes, ...rest } = b;
+        return { ...rest, imagen: /^[a-f0-9-]{36}\.(jpg|png|webp)$/i.test(b.imagen || "") ? b.imagen : "" };
+      }) : [],
     };
   } catch {
     return { fichas: FICHAS_INICIALES, ideas: { fecha: "", lista: [], fuentes: {} }, borradores: [] };
@@ -177,7 +165,7 @@ export function slugDe(t) {
 function categoriaDe(ficha, titulo) {
   const t = `${ficha?.id || ""} ${titulo}`.toLowerCase();
   if (/factur|renta|cobro|fiscal|iva/.test(t)) return { category: "Facturación", cat_class: "cat-amber" };
-  if (/mibo|flow|automat|mac|deck/.test(t)) return { category: "Automatización", cat_class: "cat-blue" };
+  if (/flow|automat|mac|deck/.test(t)) return { category: "Automatización", cat_class: "cat-blue" };
   if (/mago|battle|juego/.test(t)) return { category: "Juegos", cat_class: "cat-teal" };
   return { category: "Datos", cat_class: "cat-teal" };
 }
@@ -233,8 +221,7 @@ const seguro = (p) => p.then((v) => v, (e) => ({ estado: "error", detalle: e.mes
 
 export async function proponerIdeas() {
   const datos = await leer();
-  const [google, bing, blog, enMarcha, mibo] = await Promise.all([seguro(consultasGoogle()), seguro(consultasBing()), articulosDelBlog(), resumenParaEscribir(), contextoMibo()]);
-  const proyectosMibo = (mibo.proyectos || []).map((p) => p.nombre);
+  const [google, bing, blog] = await Promise.all([seguro(consultasGoogle()), seguro(consultasBing()), articulosDelBlog()]);
   const busquedas = [...google.filas, ...bing.filas]
     .filter((x) => x.busqueda)
     .sort((a, b) => b.impresiones - a.impresiones)
@@ -252,10 +239,8 @@ export async function proponerIdeas() {
       {
         role: "user",
         content: JSON.stringify({
-          tarea: "Propón 6 artículos nuevos: 4 de tipo «producto» y 2 de tipo «libre» (variados entre sí, no siempre sobre él ni sobre software). No repitas temas que ya están en el blog. Para los de tipo «producto»: Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa también lo que Roberto lleva entre manos: un avance real de un proyecto (qué se ha hecho, qué problema se resolvió) puede ser un buen artículo si alguien buscaría ese problema.",
-          formato: { ideas: [{ tipo: "producto o libre", titulo: "título del artículo (en los de producto, con la búsqueda dentro)", busqueda: "lo que la persona teclearía, o vacío en los libres", producto: "id de la ficha, o vacío en los libres", proyecto_mibo: "nombre exacto del proyecto de MiBØ relacionado, o vacío", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
-          en_marcha_segun_mibo: enMarcha || "MiBØ todavía no ha mandado nada.",
-          proyectos_mibo: proyectosMibo,
+          tarea: "Propón 6 artículos nuevos: 4 de tipo «producto» y 2 de tipo «libre» (variados entre sí, no siempre sobre él ni sobre software). No repitas temas que ya están en el blog. Para los de tipo «producto»: Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa exclusivamente las fichas y las búsquedas disponibles.",
+          formato: { ideas: [{ tipo: "producto o libre", titulo: "título del artículo (en los de producto, con la búsqueda dentro)", busqueda: "lo que la persona teclearía, o vacío en los libres", producto: "id de la ficha, o vacío en los libres", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
           fichas: datos.fichas.map(({ id, nombre, para, hechos }) => ({ id, nombre, para, hechos })),
           busquedas_reales: busquedas,
           ya_en_el_blog: blog.map((a) => a.titulo),
@@ -272,13 +257,12 @@ export async function proponerIdeas() {
       titulo: texto(i.titulo, 160),
       busqueda: texto(i.busqueda, 160),
       producto: datos.fichas.some((f) => f.id === i.producto) ? i.producto : "",
-      proyectoMibo: proyectosMibo.includes(i.proyecto_mibo) ? i.proyecto_mibo : "",
       porque: texto(i.porque, 400),
     }));
   datos.ideas = {
     fecha: new Date().toISOString(),
     lista,
-    fuentes: { google: google.estado, bing: bing.estado, busquedas: busquedas.length, articulos: blog.length, mibo: Boolean(enMarcha) },
+    fuentes: { google: google.estado, bing: bing.estado, busquedas: busquedas.length, articulos: blog.length },
   };
   await guardar(datos);
   return datos.ideas;
@@ -286,14 +270,10 @@ export async function proponerIdeas() {
 
 // ───────────────────────── 2. borrador ─────────────────────────
 
-export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "", proyectoMibo = "", tipo = "" }) {
+export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "" }) {
   const datos = await leer();
   const ficha = datos.fichas.find((f) => f.id === producto) || null;
-  const [voz, enMarcha] = await Promise.all([
-    instruccionVoz(),
-    tipo === "libre" && !proyectoMibo ? "" : resumenParaEscribir({ proyecto: proyectoMibo || ficha?.nombre || "" }).then((r) => r || (proyectoMibo ? "" : resumenParaEscribir({ maxProyectos: 6 }))),
-  ]);
-  const imagenes = (await imagenesMibo({ proyecto: proyectoMibo, max: 8 })).map((i) => i.id);
+  const voz = await instruccionVoz();
   const respuesta = await d.openaiChat({
     model: d.openaiTextModel,
     json: true,
@@ -311,14 +291,13 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
           "REGLA DURA: del producto solo puedes afirmar lo que está en «hechos». Si algo no está ahí, no lo digas. No inventes cifras, clientes, premios ni fechas.",
           "Sobre leyes, impuestos o normas: solo lo general y seguro; si dependes de un detalle, di que hay que comprobarlo con la fuente oficial.",
           "Formato: Markdown. Sin título # (va aparte). Secciones con ##. Entre 600 y 1.000 palabras.",
-          "Si te paso lo que Roberto lleva entre manos (de MiBØ), puedes contar avances reales en primera persona, pero solo los que aparecen ahí.",
           "Responde solo JSON: {\"titulo\": \"...\", \"descripcion\": \"150-160 caracteres para Google\", \"cuerpo\": \"markdown\"}.",
           voz,
         ].filter(Boolean).join("\n"),
       },
       {
         role: "user",
-        content: JSON.stringify({ titulo, busqueda, porque, producto: ficha, en_marcha_segun_mibo: enMarcha || "", correo: "roberto@aeternal-flow.es" }),
+        content: JSON.stringify({ titulo, busqueda, porque, producto: ficha, correo: "roberto@aeternal-flow.es" }),
       },
     ],
   });
@@ -332,8 +311,6 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
     original: texto(r.cuerpo, 20000),
     busqueda: texto(busqueda, 160),
     producto: ficha?.id || "",
-    proyectoMibo: texto(proyectoMibo, 120),
-    imagenes,
     imagen: "",
     estado: "borrador",
     creado: ahora,
@@ -420,14 +397,10 @@ async function versionesPorRed(borrador, url) {
     .map((k) => [k, texto(typeof r[k] === "string" ? r[k] : JSON.stringify(r[k], null, 2), 3000)]));
 }
 
-// La imagen elegida (de MiBØ) se copia a los medios públicos de Flow para que el blog la enseñe.
-async function imagenPublica(idImagen, origen) {
-  const ruta = rutaImagen(idImagen);
-  if (!ruta || !d.publicationMediaDirectory || !origen) return "";
-  const ext = path.extname(ruta);
-  const nombre = `${crypto.randomUUID()}${ext}`;
-  await fs.mkdir(d.publicationMediaDirectory, { recursive: true });
-  await fs.copyFile(ruta, path.join(d.publicationMediaDirectory, nombre));
+// Las portadas se guardan en la biblioteca pública de Flow.
+async function imagenPublica(nombre, origen) {
+  if (!/^[a-f0-9-]{36}\.(jpg|png|webp)$/i.test(nombre) || !origen) throw new Error("Selecciona una portada de Flow válida.");
+  await fs.access(path.join(d.publicationMediaDirectory, nombre));
   return `${origen}/media/publications/${nombre}`;
 }
 
@@ -437,7 +410,7 @@ export async function publicarBorrador(id, origen = "") {
   if (!borrador) throw Object.assign(new Error("Borrador no encontrado"), { status: 404 });
   if (!borrador.cuerpo.trim()) throw new Error("El borrador está vacío.");
   const ficha = datos.fichas.find((f) => f.id === borrador.producto) || null;
-  const imagenUrl = borrador.imagen ? await imagenPublica(borrador.imagen, origen).catch(() => "") : "";
+  const imagenUrl = borrador.imagen ? await imagenPublica(borrador.imagen, origen) : "";
   const blog = await subirAlBlog(borrador, ficha, imagenUrl);
   if (imagenUrl) borrador.imagenUrl = imagenUrl;
   Object.assign(borrador, { estado: "publicado", url: blog.url, slug: blog.slug, publicado: new Date().toISOString(), actualizado: new Date().toISOString() });
@@ -476,10 +449,8 @@ export function montarVisibilidad(app, dependencias) {
 
   app.get("/api/visibilidad", requireAuth, responder(async () => {
     const datos = await leer();
-    const mibo = await contextoMibo();
     return {
       ...datos,
-      proyectosMibo: (mibo.proyectos || []).map((p) => p.nombre),
       redes: Object.fromEntries(Object.entries(REGLAS_CANAL).map(([k, v]) => [k, v.nombre])),
       estado: {
         blog: Boolean(process.env.AETERNAL_BLOG_API_TOKEN || process.env.BLOG_API_TOKEN),
@@ -489,12 +460,20 @@ export function montarVisibilidad(app, dependencias) {
     };
   }));
 
+  app.get("/api/visibilidad/imagenes", requireAuth, responder(async () => {
+    const entradas = await fs.readdir(d.publicationMediaDirectory, { withFileTypes: true }).catch(error => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const imagenes = await Promise.all(entradas.filter(e => e.isFile() && /^[a-f0-9-]{36}\.(jpg|png|webp)$/i.test(e.name)).map(async e => ({ nombre: e.name, fecha: (await fs.stat(path.join(d.publicationMediaDirectory,e.name))).mtimeMs })));
+    return { imagenes: imagenes.sort((a,b) => b.fecha-a.fecha).slice(0,100).map(e => e.nombre) };
+  }));
   app.post("/api/visibilidad/ideas", requireAuth, responder(() => proponerIdeas()));
 
   app.post("/api/visibilidad/borradores", requireAuth, responder(async (req) => {
     const titulo = texto(req.body?.titulo, 160);
     if (!titulo) throw new Error("Falta el tema del artículo.");
-    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, proyectoMibo: texto(req.body?.proyectoMibo, 120), tipo: req.body?.tipo === "libre" ? "libre" : "" });
+    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, tipo: req.body?.tipo === "libre" ? "libre" : "" });
   }));
 
   app.patch("/api/visibilidad/borradores/:id", requireAuth, responder(async (req) => {
@@ -504,7 +483,10 @@ export function montarVisibilidad(app, dependencias) {
     for (const [campo, max] of [["titulo", 160], ["descripcion", 300], ["cuerpo", 20000]]) {
       if (typeof req.body?.[campo] === "string") b[campo] = texto(req.body[campo], max);
     }
-    if (typeof req.body?.imagen === "string") b.imagen = rutaImagen(req.body.imagen) ? req.body.imagen : "";
+    if (typeof req.body?.imagen === "string") {
+      if (req.body.imagen) await imagenPublica(req.body.imagen, d.publicOrigin(req));
+      b.imagen = req.body.imagen;
+    }
     b.actualizado = new Date().toISOString();
     await guardar(datos);
     return b;
