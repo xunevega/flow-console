@@ -163,13 +163,17 @@ async function ga4(year, month) {
   const anterior = rangoMes(ant.year, ant.month);
   const metricas = [{ name: "sessions" }, { name: "activeUsers" }, { name: "screenPageViews" }, { name: "engagedSessions" }];
   const rango = [{ startDate: actual.desde, endDate: actual.hasta }];
-  const [totales, origenes, paginas, campanas, diario, anio] = await Promise.all([
+  const opcional = async body => { try { const r = await correr(body); return {estado:"ok",rows:r.rows||[],rowCount:r.rowCount??null}; } catch(e) { return {estado:"error",detalle:String(e.message).slice(0,250),rows:[]}; } };
+  const [totales, origenes, paginas, campanas, diario, anio, atencion, entradas, acciones] = await Promise.all([
     correr({ dateRanges: [{ startDate: actual.desde, endDate: actual.hasta, name: "actual" }, { startDate: anterior.desde, endDate: anterior.finMes, name: "anterior" }], metrics: metricas }),
     correr({ dateRanges: rango, dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }], metrics: [{ name: "sessions" }, { name: "activeUsers" }], limit: 200 }),
     correr({ dateRanges: rango, dimensions: [{ name: "pagePathPlusQueryString" }, { name: "pageTitle" }], metrics: [{ name: "screenPageViews" }, { name: "activeUsers" }], orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }], limit: 100 }),
     correr({ dateRanges: rango, dimensions: [{ name: "sessionCampaignName" }, { name: "sessionManualAdContent" }, { name: "sessionSource" }], metrics: [{ name: "sessions" }], limit: 200 }).catch(() => ({ rows: [] })),
     correr({ dateRanges: rango, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }], orderBys: [{ dimension: { dimensionName: "date" } }], limit: 40 }),
     correr({ dateRanges: [{ startDate: `${year}-01-01`, endDate: rangoMes(year, 12).hasta }], dimensions: [{ name: "month" }], metrics: [{ name: "sessions" }, { name: "activeUsers" }], limit: 12 }).catch(() => ({ rows: [] })),
+    opcional({dateRanges:rango,dimensions:[{name:"pagePathPlusQueryString"},{name:"pageTitle"}],metrics:[{name:"userEngagementDuration"},{name:"activeUsers"},{name:"screenPageViews"}],limit:250}),
+    opcional({dateRanges:rango,dimensions:[{name:"landingPagePlusQueryString"},{name:"sessionSource"},{name:"sessionMedium"}],metrics:[{name:"sessions"},{name:"engagedSessions"}],orderBys:[{metric:{metricName:"sessions"},desc:true}],limit:250}),
+    opcional({dateRanges:rango,dimensions:[{name:"pagePathPlusQueryString"},{name:"eventName"},{name:"linkUrl"}],metrics:[{name:"eventCount"}],dimensionFilter:{filter:{fieldName:"eventName",inListFilter:{values:["click","file_download","form_submit"]}}},orderBys:[{metric:{metricName:"eventCount"},desc:true}],limit:250}),
   ]);
   const fila = (nombre) => {
     const row = (totales.rows || []).find((r) => (r.dimensionValues || []).some((v) => v.value === nombre)) || null;
@@ -201,6 +205,13 @@ async function ga4(year, month) {
       vistas: r0(row.metricValues?.[0]?.value),
       personas: r0(row.metricValues?.[1]?.value),
     })),
+    comportamiento:{
+      fuente:"GA4",
+      estados:Object.fromEntries(Object.entries({atencion,entradas,acciones}).map(([k,v])=>[k,{estado:v.estado,detalle:v.detalle||"",rowCount:v.rowCount??null}])),
+      atencion:atencion.rows.map(r=>({ruta:r.dimensionValues?.[0]?.value||"/",titulo:r.dimensionValues?.[1]?.value||"",segundos:r0(r.metricValues?.[0]?.value),personas:r0(r.metricValues?.[1]?.value),vistas:r0(r.metricValues?.[2]?.value)})),
+      entradas:entradas.rows.map(r=>({ruta:r.dimensionValues?.[0]?.value||"(not set)",origen:r.dimensionValues?.[1]?.value||"",medio:r.dimensionValues?.[2]?.value||"",sesiones:r0(r.metricValues?.[0]?.value),conInteres:r0(r.metricValues?.[1]?.value)})),
+      acciones:acciones.rows.map(r=>({ruta:r.dimensionValues?.[0]?.value||"/",evento:r.dimensionValues?.[1]?.value||"",destino:r.dimensionValues?.[2]?.value||"",cantidad:r0(r.metricValues?.[0]?.value)})),
+    },
     marcas,
     diario: (diario.rows || []).map((row) => {
       const f = row.dimensionValues?.[0]?.value || "";
@@ -893,7 +904,8 @@ async function resumen(year, month) {
     vistas: webFuente.vistas,
     anterior: webFuente.anterior,
     canales: webFuente.canales,
-    paginas: (webFuente.paginas || []).slice(0, 10).map((p) => ({ ...p, titulo: p.titulo || (g.paginas || []).find((x) => x.ruta === p.ruta)?.titulo || "" })),
+    paginas: (webFuente.paginas || []).slice(0, 50).map((p) => ({ ...p, titulo: p.titulo || (g.paginas || []).find((x) => x.ruta === p.ruta)?.titulo || "" })),
+    comportamiento: g.estado === "ok" ? g.comportamiento : null,
     diario: webFuente.diario,
     ga4: g.estado === "ok" ? { visitas: g.visitas, personas: g.personas } : null,
     umami: um.estado === "ok" ? { visitas: um.visitas, personas: um.personas } : null,
