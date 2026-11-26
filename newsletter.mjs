@@ -3,7 +3,7 @@
 //   Alta:    el formulario de la web envía el correo aquí (/newsletter/alta, sin JavaScript).
 //            Flow manda un correo de confirmación; solo al pulsar el enlace (/newsletter/confirmar)
 //            entra en la lista de Brevo. Doble confirmación, como pide la ley.
-//   Números: Flow escribe el borrador con la voz de Roberto (lo publicado, lo que cuenta MiBØ y
+//   Números: Flow escribe el borrador con la voz de Roberto (lo publicado, las notas del autor y
 //            algún tema libre); él lo repasa, se manda una prueba y lo envía. La baja la pone Brevo.
 //   Cifras:  suscriptores y aperturas/clics de los últimos envíos.
 //
@@ -15,7 +15,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import { instruccionVoz, aprenderDeCorreccion } from "./mivoz.mjs";
-import { resumenParaEscribir } from "./desde-mibo.mjs";
 import { markdownAHtml } from "./visibilidad.mjs";
 import { avisoExterno } from "./avisos-flow.mjs";
 
@@ -157,7 +156,7 @@ export async function escribirNumero({ notas = "" } = {}) {
   const v = await leer();
   const ultimo = v.numeros.find((n) => n.estado === "enviado");
   const dias = ultimo ? Math.max(7, Math.ceil((Date.now() - Date.parse(ultimo.enviado)) / 86400000)) : 45;
-  const [voz, articulos, enMarcha] = await Promise.all([instruccionVoz(), articulosRecientes(dias), resumenParaEscribir({ maxProyectos: 8 })]);
+  const [voz, articulos] = await Promise.all([instruccionVoz(), articulosRecientes(dias)]);
   const r = await d.openaiChat({
     model: d.openaiTextModel,
     json: true,
@@ -168,14 +167,14 @@ export async function escribirNumero({ notas = "" } = {}) {
         role: "system",
         content: [
           "Escribes la newsletter de Roberto Díaz (Æternal Flow): un correo personal a gente que se ha apuntado porque le interesa lo que hace. Primera persona, como una carta a alguien que te conoce un poco.",
-          "Estructura libre pero corta (300-600 palabras): lo que ha publicado (con su enlace), en qué ha avanzado de verdad según MiBØ (solo lo que aparece ahí), y una idea o tema libre que le ronde, si encaja. Nada de «en esta edición», ni secciones de boletín corporativo, ni pedir que compartan.",
+          "Estructura libre pero corta (300-600 palabras): lo que ha publicado (con su enlace), lo que el autor cuenta en sus notas, y una idea o tema libre que le ronde, si encaja. Nada de «en esta edición», ni secciones de boletín corporativo, ni pedir que compartan.",
           "No inventes nada: ni avances, ni cifras, ni fechas. Si hay poco que contar, que sea corto.",
           "Markdown sencillo (## para algún apartado si hace falta, listas, **negritas**, [enlaces](url)). Sin título #. Termina firmando «Roberto».",
           "Responde solo JSON: {\"asunto\": \"asunto del correo, máx. 70 caracteres, nada de clickbait\", \"cuerpo\": \"markdown\"}.",
           voz,
         ].filter(Boolean).join("\n"),
       },
-      { role: "user", content: JSON.stringify({ publicado_desde_el_ultimo_envio: articulos, en_marcha_segun_mibo: enMarcha || "", notas_de_roberto: texto(notas, 1500), dias_desde_el_ultimo: ultimo ? dias : null }) },
+      { role: "user", content: JSON.stringify({ publicado_desde_el_ultimo_envio: articulos, notas_de_roberto: texto(notas, 1500), dias_desde_el_ultimo: ultimo ? dias : null }) },
     ],
   });
   const j = JSON.parse(String(r.text).replace(/^```(?:json)?\s*|\s*```$/g, ""));
