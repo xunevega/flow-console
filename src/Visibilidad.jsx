@@ -65,6 +65,26 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const [descripcion, setDescripcion] = useState(b.descripcion);
   const [cuerpo, setCuerpo] = useState(b.cuerpo);
   const [imagen, setImagen] = useState(b.imagen || "");
+  const [biblioteca, setBiblioteca] = useState([]);
+  const cargarBiblioteca = async () => {
+    try { const r = await api("/visibilidad/imagenes"); setBiblioteca(r.imagenes || []); }
+    catch (error) { avisar(error.message, true); }
+  };
+  const subirImagen = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png","image/jpeg","image/webp"].includes(file.type) || file.size > 8*1024*1024) { avisar("Selecciona JPG, PNG o WebP de hasta 8 MB.", true); return; }
+    setOcupado("imagen");
+    try {
+      const dataUrl = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error("No se pudo leer la imagen")); reader.readAsDataURL(file); });
+      const r = await api("/publications/media", { method:"POST", body:JSON.stringify({name:file.name,type:file.type,dataUrl,targetId:"blog"}) });
+      if (!r.fileName) throw new Error("La subida no devolvió el archivo");
+      setImagen(r.fileName);
+      setBiblioteca(current => [r.fileName,...current.filter(x => x !== r.fileName)]);
+      avisar("Imagen cargada. Guarda los cambios del artículo.");
+    } catch (error) { avisar(error.message,true); } finally { setOcupado(""); }
+  };
   const [ocupado, setOcupado] = useState("");
   const cambiado = titulo !== b.titulo || descripcion !== b.descripcion || cuerpo !== b.cuerpo || imagen !== (b.imagen || "");
   const ficha = fichas.find((f) => f.id === b.producto);
@@ -113,7 +133,6 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
           <small>
             {b.estado === "publicado" ? `Publicado ${fecha(b.publicado)}` : `Borrador · ${fecha(b.actualizado)}`}
             {ficha ? ` · ${ficha.nombre}` : ""}
-            {b.proyectoMibo ? ` · MiBØ: ${b.proyectoMibo}` : ""}
             {b.busqueda ? ` · «${b.busqueda}»` : ""}
           </small>
         </div>
@@ -125,19 +144,21 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
           <label>Título<input value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={160} /></label>
           <label>Descripción para Google <small>{descripcion.length}/160</small><textarea rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} maxLength={300} /></label>
           <label>Artículo (Markdown)<textarea rows={18} value={cuerpo} onChange={(e) => setCuerpo(e.target.value)} /></label>
-          {b.imagenes?.length > 0 && (
-            <div>
-              <small>Imagen de portada (de MiBØ)</small>
+          <div>
+              <small>Imagen de portada</small>
+              <div className="vis-acciones">
+                <label>Subir imagen <input type="file" accept="image/png,image/jpeg,image/webp" onChange={subirImagen} disabled={Boolean(ocupado)} /></label>
+                <button type="button" className="button ghost" onClick={cargarBiblioteca} disabled={Boolean(ocupado)}>Elegir de la biblioteca</button>
+              </div>
               <div className="vis-imagenes elegir">
                 <button type="button" className={`vis-sin-imagen ${!imagen ? "elegida" : ""}`} onClick={() => setImagen("")}>Sin imagen</button>
-                {b.imagenes.map((id) => (
-                  <button type="button" key={id} className={imagen === id ? "elegida" : ""} onClick={() => setImagen(id)}>
-                    <img src={`/api/mibo/imagenes/${id}`} alt="" loading="lazy" />
+                {[...new Set([imagen,...biblioteca].filter(Boolean))].map(nombre => (
+                  <button type="button" key={nombre} className={imagen === nombre ? "elegida" : ""} onClick={() => setImagen(nombre)}>
+                    <img src={`/media/publications/${encodeURIComponent(nombre)}`} alt="Portada" loading="lazy" />
                   </button>
                 ))}
               </div>
             </div>
-          )}
           <div className="vis-acciones">
             <button type="button" className="button" onClick={publicar} disabled={Boolean(ocupado)}>{ocupado === "publicar" ? "Publicando…" : "Aprobar y publicar"}</button>
             <button type="button" className="button ghost" onClick={guardar} disabled={!cambiado || Boolean(ocupado)}>Guardar cambios</button>
@@ -209,7 +230,6 @@ export default function Visibilidad({ api }) {
   const [mensaje, setMensaje] = useState({ texto: "", error: false });
   const [tema, setTema] = useState("");
   const [producto, setProducto] = useState("");
-  const [proyectoMibo, setProyectoMibo] = useState("");
   const [vez, setVez] = useState(0);
 
   const avisar = (texto, error = false) => setMensaje({ texto, error });
@@ -295,7 +315,6 @@ export default function Visibilidad({ api }) {
                   {fecha(ideas.fecha)} · {ideas.fuentes?.busquedas || 0} búsquedas reales
                   {ideas.fuentes?.google !== "ok" ? " · Google sin datos" : ""}
                   {ideas.fuentes?.bing !== "ok" ? " · Bing sin datos" : ""}
-                  {ideas.fuentes?.mibo ? " · con lo que cuenta MiBØ" : " · MiBØ sin datos"}
                 </p>
               )}
               {!ideas.lista?.length && <p className="est-vacio">Todavía no hay ideas. Pulsa «Buscar ideas nuevas» (Flow también lo hace solo una vez por semana).</p>}
@@ -304,7 +323,7 @@ export default function Visibilidad({ api }) {
                   <article key={idea.id} className={idea.tipo === "libre" ? "libre" : ""}>
                     {idea.tipo === "libre" && <span className="vis-etiqueta">Tema libre</span>}
                     <b>{idea.titulo}</b>
-                    <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}{idea.proyectoMibo ? ` · ${idea.proyectoMibo}` : ""}</small>
+                    <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}</small>
                     <p>{idea.porque}</p>
                     <button type="button" className="button ghost" onClick={() => escribir(idea)} disabled={Boolean(ocupado)}>
                       {ocupado === idea.id ? "Escribiendo…" : "Escribir este"}
@@ -318,13 +337,7 @@ export default function Visibilidad({ api }) {
                   <option value="">Sin producto</option>
                   {fichas.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
                 </select>
-                {datos.proyectosMibo?.length > 0 && (
-                  <select value={proyectoMibo} onChange={(e) => setProyectoMibo(e.target.value)}>
-                    <option value="">Sin proyecto de MiBØ</option>
-                    {datos.proyectosMibo.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                )}
-                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim(), producto, proyectoMibo })}>
+                <button type="button" className="button ghost" disabled={!tema.trim() || Boolean(ocupado)} onClick={() => escribir({ titulo: tema.trim(), producto })}>
                   {ocupado === "tema" ? "Escribiendo…" : "Escribir"}
                 </button>
               </div>
