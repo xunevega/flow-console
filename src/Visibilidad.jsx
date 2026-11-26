@@ -115,6 +115,10 @@ function Version({ red, nombre, textoVersion, titulo, api, avisar, articulo, ima
 
 const PRIORIDAD={prioritario:"Prioritario",recomendado:"Recomendado",opcional:"Opcional",no_recomendado:"No recomendado"};
 const sugeridos=(lista)=> (lista||[]).filter(r=>["prioritario","recomendado"].includes(r.prioridad)).map(r=>r.canal);
+function Evidencias({lista}) {
+  if(!lista?.length)return <small className="est-pie">Hipótesis editorial · sin evidencia externa vinculada.</small>;
+  return <details><summary>{lista.length} señales externas vinculadas · comprobar relevancia</summary>{lista.map(x=><p key={x.id}><a href={x.url} target="_blank" rel="noreferrer">{x.titulo}</a><small> · {x.fuente}{x.fecha?" · "+fecha(x.fecha):""}{x.metrica?" · "+x.metrica:""}</small></p>)}</details>;
+}
 function Recomendaciones({lista,redes}) {
   if(!lista?.length)return null;
   return <div className="vis-lista">{lista.map(r=><article key={r.canal}><b>{redes[r.canal]||r.canal} · {PRIORIDAD[r.prioridad]}</b><p>{r.motivo}</p><small>{[r.formato,r.momento].filter(Boolean).join(" · ")}</small></article>)}</div>;
@@ -398,7 +402,7 @@ export default function Visibilidad({ api }) {
         </header>
 
         <p className="est-frase">
-          Flow mira qué se busca en Google y Bing, propone artículos que llevan a lo que haces y los escribe con los datos de tus fichas.
+          Flow consulta fuentes externas y las búsquedas de tu web cuando están conectadas. Las ideas con evidencia muestran sus enlaces; las demás son hipótesis editoriales.
           También puedes escribir temas libres. Prepara los destinos antes de publicar y revisa cada versión.
         </p>
 
@@ -414,9 +418,14 @@ export default function Visibilidad({ api }) {
                   {ocupado === "ideas" ? "Buscando…" : "Buscar oportunidades nuevas"}
                 </button>
               </div>
+              <div className="vis-lista">
+                <p className="est-pie">Fuentes consultadas realmente en la última revisión. Noticias y debates no equivalen a volumen de búsquedas.</p>
+                {!(ideas.investigacion?.fuentes||[]).length && <small>Sin investigación externa registrada. Busca oportunidades nuevas.</small>}
+                {(ideas.investigacion?.fuentes||[]).map(f=><article key={f.id}><b>{f.nombre}</b><small> · {f.estado==="ok"?f.cantidad+" señales":f.estado==="sin_resultados"?"Sin resultados":"Error: "+f.error} · {new Date(f.consultado).toLocaleString("es-ES")}</small></article>)}
+              </div>
               {ideas.fecha && (
                 <p className="est-pie">
-                  {fecha(ideas.fecha)} · {ideas.fuentes?.busquedas || 0} búsquedas reales
+                  {fecha(ideas.fecha)} · {ideas.fuentes?.busquedas || 0} consultas de nuestra web
                   {ideas.fuentes?.google !== "ok" ? " · Google sin datos" : ""}
                   {ideas.fuentes?.bing !== "ok" ? " · Bing sin datos" : ""}
                 </p>
@@ -428,7 +437,7 @@ export default function Visibilidad({ api }) {
                     {idea.tipo === "libre" && <span className="vis-etiqueta">Tema libre</span>}
                     <b>{idea.titulo}</b>
                     <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}</small>
-                    <p>{idea.porque}</p><Recomendaciones lista={idea.recomendaciones} redes={datos.redes||{}}/>
+                    <p>{idea.porque}</p><Evidencias lista={idea.evidencias}/><Recomendaciones lista={idea.recomendaciones} redes={datos.redes||{}}/>
                     <button type="button" className="button ghost" onClick={() => escribir(idea)} disabled={Boolean(ocupado)}>
                       {ocupado === idea.id ? "Escribiendo…" : "Escribir este"}
                     </button>
