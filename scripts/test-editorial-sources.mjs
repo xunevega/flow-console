@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { investigarEditorial, extraerSenales } from "../editorial-sources.mjs";
+const rss="<rss><channel><item><title>Un tema &amp; otro</title><link>https://example.org/article</link><pubDate>Thu, 26 Nov 2026 12:00:00 GMT</pubDate><ht:approx_traffic>200+</ht:approx_traffic></item></channel></rss>";
+const rows=extraerSenales({formato:"rss",nombre:"Test",tipo:"tendencia"},rss);
+assert.equal(rows.length,1);assert.equal(rows[0].titulo,"Un tema & otro");assert.equal(rows[0].metrica,"200+");
+assert.throws(()=>extraerSenales({formato:"rss"},"<html>Denied</html>"));
+const result=await investigarEditorial({fetcher:async url=>{if(url.includes("reddit"))return {ok:false,status:403};if(url.includes("algolia"))return {ok:true,text:async()=>JSON.stringify({hits:[{title:"HN topic",objectID:"123",points:20,num_comments:3}]})};return {ok:true,text:async()=>rss};}});
+assert.equal(result.fuentes.length,6);
+assert.equal(result.fuentes.find(x=>x.id==="reddit").estado,"error");
+assert.equal(result.senales.length,5);
+assert.equal(new Set(result.senales.map(x=>x.id)).size,5);
+assert.ok(result.senales.every(x=>x.url.startsWith("https://")));
+const empty=await investigarEditorial({fetcher:async()=>({ok:false,status:429})});
+assert.equal(empty.senales.length,0);assert.ok(empty.fuentes.every(x=>x.estado==="error"));
+console.log("Editorial source parsing and failure handling passed");
