@@ -623,6 +623,10 @@ function manualPublicationUrl(target, task) {
   const explicitUrl = firstUrlInText(task?.notes) || firstUrlInText(target?.handle) || firstUrlInText(target?.webhookPath);
   if (explicitUrl) return explicitUrl;
   const value = `${target?.id || ""} ${target?.name || ""} ${task?.title || ""}`.toLowerCase();
+  if (target?.id === "substack-notes") return "https://substack.com/notes";
+  if (target?.id === "substack") return "https://substack.com/";
+  if (target?.id === "medium") return "https://medium.com/new-story";
+  if (target?.id === "reddit") return "https://www.reddit.com/";
   if (value.includes("linkedin") && /art[ií]culo|article/.test(value)) return "https://www.linkedin.com/pulse/article/new/";
   if (value.includes("linkedin")) return "https://www.linkedin.com/feed/";
   if (value.includes("youtube")) return "https://studio.youtube.com/";
@@ -4922,7 +4926,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const [publicationScheduledAt, setPublicationScheduledAt] = useState("");
   const [linkedinMode, setLinkedinMode] = useState("post");
   const [tiktokMode, setTiktokMode] = useState("draft");
-  const [, setPosts] = useState([]);
+  const [posts, setPosts] = useState([]);
+  const [manualUrls, setManualUrls] = useState({});
   const [savedDraft, setSavedDraft] = useState(readPublicationDraft);
   const [blogArticles, setBlogArticles] = useState([]);
   const [blogArticleDraft, setBlogArticleDraft] = useState({
@@ -5321,6 +5326,20 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     }
   }
 
+  async function confirmManualPost(post) {
+    setBusy("manual-confirm");
+    setError("");
+    try {
+      const result = await api(`/publications/posts/${encodeURIComponent(post.id)}/confirm`, {
+        method: "POST", body: JSON.stringify({ url: manualUrls[post.id] || "" }),
+      });
+      setPosts(current => current.map(item => item.id === post.id ? result.post : item));
+      setMessage("Publicación confirmada por ti y URL registrada.");
+      onPublicationSaved?.();
+    } catch (error) { setError(error.message); }
+    finally { setBusy(""); }
+  }
+
   function currentPublicationDraftPayload() {
     return {
       targetId: selectedTarget.id,
@@ -5422,6 +5441,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     setMessage("");
   }
 
+  const manualTarget = ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(selectedTarget.id);
   const isVideoTarget = ["youtube", "tiktok"].includes(selectedTarget.id);
   const selectedChannel = (channelStatus?.channels || []).find((channel) => channel.id === selectedTarget.id);
   const targetPending = ["pending", "attention"].includes(selectedChannel?.level || "") && selectedTarget.id === "pinterest";
@@ -5429,6 +5449,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const selectedMediaAspect = PUBLICATION_MEDIA_ASPECTS.find((option) => option.id === mediaAspect) || PUBLICATION_MEDIA_ASPECTS[0];
   const previewMediaFit = "contain";
   const publishButtonLabel = (() => {
+    if (manualTarget) return "PREPARAR PUBLICACIÓN";
     if (!selectedTarget.webhookPath) return "CONFIGURA ENTREGA";
     if (targetPending) return "PENDIENTE CONFIG";
     if (selectedTarget.id === "tiktok" && tiktokMode === "draft") return "PREPARAR PARA REVISAR";
@@ -5544,9 +5565,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                           ? "Worker asistido: deja el vídeo preparado para revisar en TikTok."
                         : target.id === "pinterest"
                           ? "Publicación directa por Pinterest API."
-                      : target.webhookPath ? "Destino preparado para entregar publicaciones." : "Configura la entrega para activar publicaciones."}
+                      : ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(target.id) ? "Preparación y publicación manual con confirmación." : target.webhookPath ? "Destino preparado para entregar publicaciones." : "Configura la entrega para activar publicaciones."}
                   </span>
-                  <b>{(channelStatus?.channels || []).find((channel) => channel.id === target.id)?.level === "pending" ? "PENDIENTE" : target.webhookPath ? "ABRIR" : "CONFIGURAR"}</b>
+                  <b>{(channelStatus?.channels || []).find((channel) => channel.id === target.id)?.level === "pending" ? "PENDIENTE" : target.webhookPath || ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(target.id) ? "ABRIR" : "CONFIGURAR"}</b>
                 </button>
               ))}
             </div>
@@ -5815,13 +5836,30 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                   <Button
                     type="button"
                     kind="primary"
-                    disabled={disabled || !selectedTarget.webhookPath || targetPending || preflightBlocked}
+                    disabled={disabled || (!manualTarget && !selectedTarget.webhookPath) || targetPending || preflightBlocked}
                     onClick={() => (selectedTarget.id === "blog" && blogArticleDraft.slug ? saveBlogArticleEdit() : submit("publish"))}
                   >
                     {busy === "publish" || busy === "blog-save"
                       ? (selectedTarget.id === "tiktok" && tiktokMode === "draft" ? "PREPARANDO..." : "PUBLICANDO...")
                       : selectedTarget.id === "blog" && blogArticleDraft.slug ? "ACTUALIZAR BLOG" : publishButtonLabel}
                   </Button>
+                  {manualTarget && <>
+                    <Button type="button" disabled={!caption.trim()} onClick={async () => {
+                      try {
+                        await copyRichText({ text: caption, html: sanitizeCaptionHtml(captionHtml || generatedTextToCaptionHtml(caption)) });
+                        setMessage("Contenido copiado.");
+                      } catch (error) { setError(error.message); }
+                    }}>COPIAR CONTENIDO</Button>
+                    <a href={manualPublicationUrl(selectedTarget)} target="_blank" rel="noopener noreferrer">Abrir {selectedTarget.name}</a>
+                    <p>Publica en la plataforma y registra después el enlace real.</p>
+                    {posts.filter(post => (post.targetId || post.target?.id) === selectedTarget.id && post.status === "pending_confirmation").map(post => (
+                      <div key={post.id}>
+                        <p>{String(post.caption || "").slice(0, 120)}</p>
+                        <input type="url" placeholder="URL HTTPS de la publicación" value={manualUrls[post.id] || ""} onChange={event => setManualUrls(current => ({ ...current, [post.id]: event.target.value }))} />
+                        <Button type="button" disabled={Boolean(busy) || !manualUrls[post.id]} onClick={() => confirmManualPost(post)}>CONFIRMAR PUBLICADO</Button>
+                      </div>
+                    ))}
+                  </>}
                   <Button type="button" onClick={reset}>LIMPIAR</Button>
                 </div>
 
