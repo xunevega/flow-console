@@ -1,3 +1,4 @@
+import { consultarRecorridos } from "./stats-journeys.mjs";
 // Estadísticas de Flow: junta en una sola respuesta lo que dicen GA4, Search Console,
 // Pinterest, YouTube, el blog, Bing, Umami y lo que Roberto sube a mano (LinkedIn por Excel,
 // Instagram por captura). Cada fuente va por separado: si una falla, las demás siguen.
@@ -332,7 +333,8 @@ async function umami(year, month) {
   const desde = Date.parse(`${actual.desde}T00:00:00Z`);
   const hasta = Date.parse(`${actual.hasta}T23:59:59Z`);
   const zona = { timezone: "Europe/Madrid" };
-  const [stats, statsAnt, referentes, paginas, titulos, serie, anio] = await Promise.all([
+  const [stats, statsAnt, referentes, paginas, titulos, serie, anio, recorridos] = await Promise.all([
+    consultarRecorridos(get,desde,hasta),
     get("/stats", { startAt: desde, endAt: hasta }),
     get("/stats", { startAt: Date.parse(`${anterior.desde}T00:00:00Z`), endAt: Date.parse(`${anterior.finMes}T23:59:59Z`) }),
     get("/metrics", { startAt: desde, endAt: hasta, type: "referrer", limit: 50 }).catch(() => []),
@@ -360,6 +362,7 @@ async function umami(year, month) {
     canales: [...porCanal.entries()].map(([canal, visitas]) => ({ canal, visitas })).sort((a, b) => b.visitas - a.visitas),
     paginas: lista(paginas).map((p) => ({ ruta: p.x, vistas: r0(p.y) })),
     titulos: lista(titulos).map((p) => ({ titulo: p.x, vistas: r0(p.y) })),
+    recorridos,
     diario: sesionesSerie.map((p) => ({ fecha: String(p.x).slice(0, 10), visitas: r0(p.y) })),
     anio: sesionesAnio.map((p) => ({ mes: Number(String(p.x).slice(5, 7)), visitas: r0(p.y) })),
   };
@@ -906,6 +909,7 @@ async function resumen(year, month) {
     canales: webFuente.canales,
     paginas: (webFuente.paginas || []).slice(0, 50).map((p) => ({ ...p, titulo: p.titulo || (g.paginas || []).find((x) => x.ruta === p.ruta)?.titulo || "" })),
     comportamiento: g.estado === "ok" ? g.comportamiento : null,
+    recorridos: um.estado === "ok" ? um.recorridos : null,
     diario: webFuente.diario,
     ga4: g.estado === "ok" ? { visitas: g.visitas, personas: g.personas } : null,
     umami: um.estado === "ok" ? { visitas: um.visitas, personas: um.personas } : null,
