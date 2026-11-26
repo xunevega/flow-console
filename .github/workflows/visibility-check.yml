@@ -1,7 +1,7 @@
 name: Visibility checks
 on:
   push:
-    branches: [flow-independent-visibility, cursor/funcionalidad-real]
+    branches: [flow-independent-visibility, visibility-multichannel, cursor/funcionalidad-real]
   pull_request:
     branches: [cursor/funcionalidad-real]
 permissions:
