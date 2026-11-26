@@ -365,6 +365,17 @@ export default function Estadisticas({ api, Antiguo }) {
               </table></div>:<p className="est-vacio">{web?.comportamiento?.estados?.acciones?.detalle||"No hay acciones registradas. GA4 necesita medir estos eventos."}</p>}
               <small className="est-pie">Solo eventos realmente medidos. Los clics internos requieren instrumentación adicional; no se deducen de los totales.</small>
             </section>
+            <section className="panel est-panel">
+              <h3>Recorridos y últimas páginas visitadas</h3>
+              <p className="est-pie">Umami · secuencias observadas en el periodo. Una salida no implica abandono de lectura.</p>
+              {web?.recorridos && web.recorridos.estado!=="error" ? <>
+                <p className="est-pie">{n(web.recorridos.visitas)} visitas con páginas registradas · {n(web.recorridos.sesionesConsultadas)} sesiones consultadas{web.recorridos.limitado?" · muestra parcial (máximo 50 sesiones)":""}{web.recorridos.fallos?" · "+web.recorridos.fallos+" consultas fallidas":""}</p>
+                {web.recorridos.recorridos.length?<div style={{overflowX:"auto"}}><table className="est-tabla"><thead><tr><th>Recorrido observado</th><th>Visitas</th></tr></thead><tbody>{web.recorridos.recorridos.map((r,i)=><tr key={i}><td>{r.paginas.join(" → ")}</td><td>{n(r.visitas)}</td></tr>)}</tbody></table></div>:<p className="est-vacio">Sin recorridos registrados.</p>}
+                <h4>Última página observada</h4>
+                <table className="est-tabla"><thead><tr><th>Página</th><th>Visitas</th><th>Una sola página</th></tr></thead><tbody>{web.recorridos.salidas.map(r=><tr key={r.ruta}><td>{r.ruta}</td><td>{n(r.visitas)}</td><td>{n(r.unaPagina)}</td></tr>)}</tbody></table>
+                <small>El límite del periodo puede cortar una visita. No se puede conocer el motivo de salida.</small>
+              </>:<p className="est-vacio">{web?.recorridos?.detalle||"Umami no disponible."}</p>}
+            </section>
             <section className="est-tarjetas">
               <Tarjeta titulo={`Visitas a la web${web ? ` · ${web.origen}` : ""}`} valor={web?.visitas ?? null} anterior={web?.anterior?.visitas} />
               <Tarjeta titulo="Personas distintas" valor={web?.personas ?? null} anterior={web?.anterior?.personas} />
