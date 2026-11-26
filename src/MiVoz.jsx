@@ -1,20 +1,17 @@
 import { useEffect, useState } from "react";
 
-// Mi voz: cómo escribe Roberto (ejemplos, reglas y lo aprendido de sus correcciones) y lo que
-// MiBØ cuenta desde el Mac (proyectos e imágenes). Sustituye a AÑADIR y CORREGIR.
+// Preferencias editoriales independientes.
 
 const fecha = (iso) => (iso ? new Date(iso).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "nunca");
 
 export default function MiVoz({ api }) {
   const [voz, setVoz] = useState(null);
-  const [mibo, setMibo] = useState(null);
   const [reglas, setReglas] = useState("");
   const [ejemplo, setEjemplo] = useState("");
   const [donde, setDonde] = useState("");
   const [url, setUrl] = useState("");
   const [leyendo, setLeyendo] = useState(false);
   const [leccion, setLeccion] = useState("");
-  const [proyecto, setProyecto] = useState("");
   const [mensaje, setMensaje] = useState({ texto: "", error: false });
   const [vez, setVez] = useState(0);
 
@@ -23,12 +20,11 @@ export default function MiVoz({ api }) {
 
   useEffect(() => {
     let vivo = true;
-    Promise.all([api("/mivoz"), api("/mibo")])
-      .then(([v, m]) => {
+    api("/mivoz")
+      .then((v) => {
         if (!vivo) return;
         setVoz(v);
         setReglas(v.reglas || "");
-        setMibo(m);
       })
       .catch((e) => vivo && setMensaje({ texto: e.message, error: true }));
     return () => {
@@ -45,10 +41,6 @@ export default function MiVoz({ api }) {
       avisar(error.message, true);
     }
   };
-
-  const proyectos = mibo?.contexto?.proyectos || [];
-  const imagenes = (mibo?.imagenes || []).filter((i) => !proyecto || i.proyecto === proyecto);
-  const conImagenes = [...new Set((mibo?.imagenes || []).map((i) => i.proyecto).filter(Boolean))];
 
   return (
     <main className="stats-workspace">
@@ -132,43 +124,6 @@ export default function MiVoz({ api }) {
               </div>
             </section>
 
-            <section className="panel est-panel">
-              <div className="est-panel-cab">
-                <h3>Desde MiBØ</h3>
-                <small>{mibo?.conectado ? `Último envío: ${fecha(mibo?.contexto?.recibido)}` : "MiBØ sin conectar"}</small>
-              </div>
-              <p className="est-pie">Lo que llevas entre manos y las imágenes recientes de cada proyecto. Flow lo usa para proponer y escribir.</p>
-              {!proyectos.length && <p className="est-vacio">MiBØ todavía no ha mandado nada.</p>}
-              {proyectos.length > 0 && (
-                <div className="vis-proyectos">
-                  {proyectos.map((p) => (
-                    <details key={p.nombre}>
-                      <summary><b>{p.nombre}</b>{p.estado ? <small> · {p.estado}</small> : null}</summary>
-                      {p.que && <p>{p.que}</p>}
-                      {p.siguiente && <p><small>Siguiente:</small> {p.siguiente}</p>}
-                      {p.notas?.length > 0 && <ul>{p.notas.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-                    </details>
-                  ))}
-                </div>
-              )}
-              {(mibo?.imagenes || []).length > 0 && (
-                <>
-                  <div className="est-filtros">
-                    <button type="button" className={!proyecto ? "activo" : ""} onClick={() => setProyecto("")}>Todas</button>
-                    {conImagenes.map((p) => <button type="button" key={p} className={proyecto === p ? "activo" : ""} onClick={() => setProyecto(p)}>{p}</button>)}
-                  </div>
-                  <div className="vis-imagenes">
-                    {imagenes.map((i) => (
-                      <figure key={i.id}>
-                        <img src={`/api/mibo/imagenes/${i.id}`} alt={i.nombre} loading="lazy" />
-                        <figcaption>{i.proyecto} · {fecha(i.fecha)}</figcaption>
-                        <button type="button" className="button ghost" onClick={() => hacer(() => api(`/mibo/imagenes/${i.id}`, { method: "DELETE" }))}>Quitar</button>
-                      </figure>
-                    ))}
-                  </div>
-                </>
-              )}
-            </section>
           </>
         )}
       </section>
