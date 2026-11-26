@@ -2662,6 +2662,8 @@ function publicationFingerprint(value = {}) {
       imageUrl: String(value.imageUrl || "").trim(),
       videoUrl: String(value.videoUrl || "").trim(),
       targetId: String(value.targetId || value.target?.id || "instagram").trim().toLowerCase(),
+      ...(value.masterId ? { masterId: value.masterId } : {}),
+      ...(value.editorialFormat ? { editorialFormat: value.editorialFormat } : {}),
       day: String(value.scheduledAt || value.publishedAt || value.createdAt || new Date().toISOString()).slice(0, 10),
     }))
     .digest("hex");
@@ -6077,6 +6079,13 @@ app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) =>
       try {
         const url = new URL(String(req.body?.url || ""));
         if (url.protocol !== "https:" || url.username || url.password) throw new Error("invalid");
+        const id = posts[index].targetId || posts[index].target?.id;
+        const domain = id.startsWith("substack") ? "substack.com" : id === "linkedin-newsletter" ? "linkedin.com" : id === "medium" ? "medium.com" : "reddit.com";
+        if (url.hostname !== domain && !url.hostname.endsWith("." + domain)) {
+          // Substack and Medium support custom publication domains; allow their HTTPS URLs.
+          if (!["substack", "medium"].includes(id)) throw new Error("invalid domain");
+        }
+        if (url.pathname === "/") throw new Error("missing publication path");
         finalUrl = url.href;
       } catch {
         return res.status(400).json({ error: "Indica la URL HTTPS de la publicación real." });
@@ -6095,7 +6104,7 @@ app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) =>
     posts[index] = post;
     await writePublicationPosts(posts);
     await rememberPublishedCalendarTask(post).catch(() => {});
-    const memory = await rememberPublicationInTraining(post);
+    const memory = await rememberPublicationInTraining(post).catch(error => { console.warn("No se pudo aprender de la publicación confirmada:", error.message); return null; });
     res.json({ ok: true, post, posts: posts.slice(0, 50), memory: memory ? generatorMemoryPayload(memory) : null });
   } catch (error) {
     res.status(500).json({ error: `No se pudo confirmar la publicación: ${error.message}` });
@@ -6372,7 +6381,8 @@ async function handlePublicationSubmit(req, res) {
   try {
     const targets = await readPublicationTargets();
     const requestedTargetId = String(req.body?.targetId || req.body?.target?.id || "instagram");
-    const target = targets.find((item) => item.id === requestedTargetId) || targets.find((item) => item.id === "instagram");
+    const target = targets.find((item) => item.id === requestedTargetId);
+    if (!target) return res.status(400).json({ error: "Destino de publicación desconocido" });
     payload = cleanPublicationPayload({ ...req.body, target });
     const masterId = String(req.body?.masterId || "");
     if (masterId) {
@@ -6393,6 +6403,10 @@ async function handlePublicationSubmit(req, res) {
 
     const posts = await readPublicationPosts();
     const fingerprint = publicationFingerprint(payload);
+    if (payload.action === "publish" && manualEditorialTargetIds.has(payload.target.id) && !req.body?.force) {
+      const pending = posts.find(post => post.status === "pending_confirmation" && post.fingerprint === fingerprint);
+      if (pending) return res.json({ ok: true, post: pending, result: pending.result });
+    }
     if (payload.action === "publish" && !req.body?.force) {
       const recentDuplicate = posts.find((post) => {
         if (payload.target.id === "blog") return false;
