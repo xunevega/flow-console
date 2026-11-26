@@ -333,7 +333,7 @@ async function umami(year, month) {
   const desde = Date.parse(`${actual.desde}T00:00:00Z`);
   const hasta = Date.parse(`${actual.hasta}T23:59:59Z`);
   const zona = { timezone: "Europe/Madrid" };
-  const [stats, statsAnt, referentes, paginas, titulos, serie, anio, recorridos] = await Promise.all([
+  const [recorridos, stats, statsAnt, referentes, paginas, titulos, serie, anio] = await Promise.all([
     consultarRecorridos(get,desde,hasta),
     get("/stats", { startAt: desde, endAt: hasta }),
     get("/stats", { startAt: Date.parse(`${anterior.desde}T00:00:00Z`), endAt: Date.parse(`${anterior.finMes}T23:59:59Z`) }),
