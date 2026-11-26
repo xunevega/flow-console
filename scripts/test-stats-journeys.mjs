@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import {resumirRecorridos,consultarRecorridos} from "../stats-journeys.mjs";
+const e=(visitId,urlPath,minute,eventType=1)=>({visitId,urlPath,createdAt:"2026-11-26T10:"+String(minute).padStart(2,"0")+":00Z",eventType});
+const rows=[e("a","/article",2),e("a","/",1),e("b","/article",3),e("a","/click",4,2),e("c","/other",5),e("c","/article",6)];
+const r=resumirRecorridos([rows]);
+assert.equal(r.visitas,3);
+assert.deepEqual(r.recorridos[0].paginas,["/","/article"]);
+assert.equal(r.salidas[0].ruta,"/article");assert.equal(r.salidas[0].visitas,3);assert.equal(r.salidas[0].unaPagina,1);
+const result=await consultarRecorridos(async path=>path==="/sessions"?{data:[{id:"one"},{id:"two"}],count:3}:path.includes("two")?Promise.reject(Error("403")):rows,0,1);
+assert.equal(result.estado,"parcial");assert.equal(result.limitado,true);assert.equal(result.fallos,1);
+assert.equal((await consultarRecorridos(async()=>{throw Error("404")},0,1)).estado,"error");
+console.log("Journey aggregation tests passed");

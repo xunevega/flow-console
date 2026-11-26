@@ -1,7 +1,7 @@
 name: Visibility checks
 on:
   push:
-    branches: [flow-independent-visibility, visibility-multichannel, cursor/funcionalidad-real]
+    branches: [flow-independent-visibility, visibility-multichannel, stats-reader-behavior, cursor/funcionalidad-real]
   pull_request:
     branches: [cursor/funcionalidad-real]
 permissions:
@@ -17,3 +17,5 @@ jobs:
       - run: npm ci
       - run: node --check server.mjs && node --check visibilidad.mjs && node --check newsletter.mjs && node --check avisos-flow.mjs
       - run: npm run build
+
+      - run: node --check estadisticas.mjs && node scripts/test-stats-journeys.mjs

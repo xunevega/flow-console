@@ -336,6 +336,46 @@ export default function Estadisticas({ api, Antiguo }) {
           <>
             <p className="est-frase">{datos.frase}</p>
 
+            <section className="panel est-panel">
+              <h3>Qué está viendo la gente</h3>
+              <p className="est-pie">Páginas concretas · {web?.origen || "Sin conexión"} · periodo seleccionado. Las visualizaciones no son lectores únicos.</p>
+              {web?.paginas?.length ? <div style={{overflowX:"auto"}}><table className="est-tabla">
+                <thead><tr><th>Página</th><th>Vistas</th><th>Usuarios</th><th>Atención media por usuario (GA4)</th></tr></thead>
+                <tbody>{web.paginas.map((p,i)=>{
+                  const a=web.comportamiento?.atencion?.find(x=>x.ruta===p.ruta&&(!p.titulo||x.titulo===p.titulo)) || web.comportamiento?.atencion?.find(x=>x.ruta===p.ruta);
+                  const segundos=a?.personas>0?Math.round(a.segundos/a.personas):null;
+                  return <tr key={p.ruta+"-"+i}><td><strong>{p.titulo||p.ruta}</strong><div><small>{p.ruta}</small></div></td><td>{n(p.vistas)}</td><td>{p.personas==null?"—":n(p.personas)}</td><td>{segundos==null?"—":Math.floor(segundos/60)+" min "+segundos%60+" s"}</td></tr>;
+                })}</tbody>
+              </table></div>:<p className="est-vacio">Sin páginas registradas o fuente no disponible.</p>}
+              <small className="est-pie">Atención: tiempo activo registrado, no prueba de lectura completa. Si las vistas proceden de Umami, la atención de GA4 corresponde a una muestra distinta. — significa no disponible.</small>
+            </section>
+            <section className="panel est-panel">
+              <h3>Por dónde entran y desde dónde</h3>
+              {web?.comportamiento?.entradas?.length?<div style={{overflowX:"auto"}}><table className="est-tabla">
+                <thead><tr><th>Página de entrada</th><th>Origen / medio</th><th>Sesiones</th><th>Con interacción</th></tr></thead>
+                <tbody>{web.comportamiento.entradas.map((r,i)=><tr key={i}><td>{r.ruta}</td><td>{r.origen} / {r.medio}</td><td>{n(r.sesiones)}</td><td>{n(r.conInteres)}</td></tr>)}</tbody>
+              </table></div>:<p className="est-vacio">{web?.comportamiento?.estados?.entradas?.detalle||"No hay entradas registradas por GA4 o no está conectado."}</p>}
+              <small className="est-pie">Fuente: GA4. Las entradas son agregadas, no recorridos individuales.</small>
+            </section>
+            <section className="panel est-panel">
+              <h3>Qué enlaces y acciones utilizan</h3>
+              {web?.comportamiento?.acciones?.length?<div style={{overflowX:"auto"}}><table className="est-tabla">
+                <thead><tr><th>Desde la página</th><th>Acción</th><th>Destino registrado</th><th>Veces</th></tr></thead>
+                <tbody>{web.comportamiento.acciones.map((r,i)=><tr key={i}><td>{r.ruta}</td><td>{{click:"Clic",file_download:"Descarga",form_submit:"Formulario"}[r.evento]||r.evento}</td><td>{r.destino==="(not set)"?"No registrado":r.destino||"No registrado"}</td><td>{n(r.cantidad)}</td></tr>)}</tbody>
+              </table></div>:<p className="est-vacio">{web?.comportamiento?.estados?.acciones?.detalle||"No hay acciones registradas. GA4 necesita medir estos eventos."}</p>}
+              <small className="est-pie">Solo eventos realmente medidos. Los clics internos requieren instrumentación adicional; no se deducen de los totales.</small>
+            </section>
+            <section className="panel est-panel">
+              <h3>Recorridos y últimas páginas visitadas</h3>
+              <p className="est-pie">Umami · secuencias observadas en el periodo. Una salida no implica abandono de lectura.</p>
+              {web?.recorridos && web.recorridos.estado!=="error" ? <>
+                <p className="est-pie">{n(web.recorridos.visitas)} visitas con páginas registradas · {n(web.recorridos.sesionesConsultadas)} sesiones consultadas{web.recorridos.limitado?" · muestra parcial (máximo 50 sesiones)":""}{web.recorridos.fallos?" · "+web.recorridos.fallos+" consultas fallidas":""}</p>
+                {web.recorridos.recorridos.length?<div style={{overflowX:"auto"}}><table className="est-tabla"><thead><tr><th>Recorrido observado</th><th>Visitas</th></tr></thead><tbody>{web.recorridos.recorridos.map((r,i)=><tr key={i}><td>{r.paginas.join(" → ")}</td><td>{n(r.visitas)}</td></tr>)}</tbody></table></div>:<p className="est-vacio">Sin recorridos registrados.</p>}
+                <h4>Última página observada</h4>
+                <table className="est-tabla"><thead><tr><th>Página</th><th>Visitas</th><th>Una sola página</th></tr></thead><tbody>{web.recorridos.salidas.map(r=><tr key={r.ruta}><td>{r.ruta}</td><td>{n(r.visitas)}</td><td>{n(r.unaPagina)}</td></tr>)}</tbody></table>
+                <small>El límite del periodo puede cortar una visita. No se puede conocer el motivo de salida.</small>
+              </>:<p className="est-vacio">{web?.recorridos?.detalle||"Umami no disponible."}</p>}
+            </section>
             <section className="est-tarjetas">
               <Tarjeta titulo={`Visitas a la web${web ? ` · ${web.origen}` : ""}`} valor={web?.visitas ?? null} anterior={web?.anterior?.visitas} />
               <Tarjeta titulo="Personas distintas" valor={web?.personas ?? null} anterior={web?.anterior?.personas} />
@@ -443,12 +483,6 @@ export default function Estadisticas({ api, Antiguo }) {
               <section className="panel est-panel">
                 <h3>De dónde llegan a la web</h3>
                 <Barras filas={web?.canales || []} />
-              </section>
-              <section className="panel est-panel">
-                <h3>Qué leen</h3>
-                <Barras
-                  filas={(web?.paginas || []).slice(0, 8).map((p) => ({ canal: p.titulo && !/^aeternal/i.test(p.titulo) ? p.titulo : p.ruta, visitas: p.vistas }))}
-                />
               </section>
               <section className="panel est-panel">
                 <h3>Qué buscan</h3>
