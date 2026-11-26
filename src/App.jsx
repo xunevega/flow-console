@@ -7923,7 +7923,7 @@ export default function App() {
       ) : view === "mivoz" ? (
         <MiVoz api={api} />
       ) : view === "visibilidad" ? (
-        <Visibilidad api={api} />
+        <Visibilidad api={api} Editor={FormattedTextarea} markdownToHtml={generatedTextToCaptionHtml} />
       ) : view === "stats" ? (
         <Estadisticas api={api} Antiguo={StatsDashboard} />
       ) : (
