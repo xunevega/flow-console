@@ -112,6 +112,12 @@ function Version({ red, nombre, textoVersion, titulo, api, avisar, articulo, ima
   );
 }
 
+const PRIORIDAD={prioritario:"Prioritario",recomendado:"Recomendado",opcional:"Opcional",no_recomendado:"No recomendado"};
+const sugeridos=(lista)=> (lista||[]).filter(r=>["prioritario","recomendado"].includes(r.prioridad)).map(r=>r.canal);
+function Recomendaciones({lista,redes}) {
+  if(!lista?.length)return null;
+  return <div className="vis-lista">{lista.map(r=><article key={r.canal}><b>{redes[r.canal]||r.canal} · {PRIORIDAD[r.prioridad]}</b><p>{r.motivo}</p><small>{[r.formato,r.momento].filter(Boolean).join(" · ")}</small></article>)}</div>;
+}
 function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const [abierto, setAbierto] = useState(b.estado !== "publicado");
   const [titulo, setTitulo] = useState(b.titulo);
@@ -119,7 +125,17 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const [cuerpo, setCuerpo] = useState(b.cuerpo);
   const [imagen, setImagen] = useState(b.imagen || "");
   const [biblioteca, setBiblioteca] = useState([]);
-  const [elegidos,setElegidos]=useState(Object.keys(redes));
+  const [recomendaciones,setRecomendaciones]=useState(b.recomendaciones||[]);
+  const [elegidos,setElegidos]=useState(b.recomendaciones?.length?sugeridos(b.recomendaciones):Object.keys(redes).filter(k=>!VIDEO.has(k)));
+  const recomendar = async () => {
+    setOcupado("recomendaciones");
+    try {
+      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,imagen})});
+      const r=await api(`/visibilidad/borradores/${b.id}/recomendaciones`,{method:"POST"});
+      setRecomendaciones(r.recomendaciones);setElegidos(sugeridos(r.recomendaciones));
+      avisar("Recomendaciones editoriales preparadas.");
+    }catch(e){avisar(e.message,true);}finally{setOcupado("");}
+  };
   const preparar = async () => {
     setOcupado("versiones");
     try {
@@ -244,6 +260,10 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
       )}
       {abierto && <div className="vis-editor">
         <h3>Distribuir artículo</h3>
+        <p className="est-pie">Recomendaciones editoriales, no predicciones de alcance. Los vídeos los produces tú.</p>
+        <button type="button" className="button ghost" disabled={Boolean(ocupado)||!cuerpo.trim()} onClick={recomendar}>{ocupado==="recomendaciones"?"Analizando…":"Recomendar destinos y momento"}</button>
+        <Recomendaciones lista={recomendaciones} redes={redes}/>
+        <button type="button" className="button ghost" disabled={!recomendaciones.length||Boolean(ocupado)} onClick={()=>setElegidos(sugeridos(recomendaciones))}>Seleccionar recomendados</button>
         <div className="vis-acciones">{Object.entries(redes).map(([red,nombre])=><label key={red}><input type="checkbox" checked={elegidos.includes(red)} onChange={e=>setElegidos(current=>e.target.checked?[...current,red]:current.filter(k=>k!==red))}/>{nombre}</label>)}</div>
         <button type="button" className="button" disabled={Boolean(ocupado)||!elegidos.length||!cuerpo.trim()} onClick={preparar}>{ocupado==="versiones"?"Preparando…":"Preparar todos los destinos seleccionados"}</button>
         {b.errorVersiones && <p className="vis-error">Versiones pendientes: {b.errorVersiones}</p>}
@@ -371,9 +391,9 @@ export default function Visibilidad({ api }) {
           <>
             <section className="panel est-panel">
               <div className="est-panel-cab">
-                <h3>Ideas de la semana</h3>
+                <h3>Oportunidades editoriales</h3>
                 <button type="button" className="button ghost" onClick={buscarIdeas} disabled={Boolean(ocupado)}>
-                  {ocupado === "ideas" ? "Buscando…" : "Buscar ideas nuevas"}
+                  {ocupado === "ideas" ? "Buscando…" : "Buscar oportunidades nuevas"}
                 </button>
               </div>
               {ideas.fecha && (
@@ -390,7 +410,7 @@ export default function Visibilidad({ api }) {
                     {idea.tipo === "libre" && <span className="vis-etiqueta">Tema libre</span>}
                     <b>{idea.titulo}</b>
                     <small>{idea.busqueda ? `Se busca: «${idea.busqueda}»` : ""}{nombreFicha(idea.producto) ? ` · lleva a ${nombreFicha(idea.producto)}` : ""}</small>
-                    <p>{idea.porque}</p>
+                    <p>{idea.porque}</p><Recomendaciones lista={idea.recomendaciones} redes={datos.redes||{}}/>
                     <button type="button" className="button ghost" onClick={() => escribir(idea)} disabled={Boolean(ocupado)}>
                       {ocupado === idea.id ? "Escribiendo…" : "Escribir este"}
                     </button>
