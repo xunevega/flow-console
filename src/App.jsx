@@ -623,6 +623,10 @@ function manualPublicationUrl(target, task) {
   const explicitUrl = firstUrlInText(task?.notes) || firstUrlInText(target?.handle) || firstUrlInText(target?.webhookPath);
   if (explicitUrl) return explicitUrl;
   const value = `${target?.id || ""} ${target?.name || ""} ${task?.title || ""}`.toLowerCase();
+  if (target?.id === "substack-notes") return "https://substack.com/notes";
+  if (target?.id === "substack") return "https://substack.com/";
+  if (target?.id === "medium") return "https://medium.com/new-story";
+  if (target?.id === "reddit") return "https://www.reddit.com/";
   if (value.includes("linkedin") && /art[ií]culo|article/.test(value)) return "https://www.linkedin.com/pulse/article/new/";
   if (value.includes("linkedin")) return "https://www.linkedin.com/feed/";
   if (value.includes("youtube")) return "https://studio.youtube.com/";
@@ -4922,7 +4926,36 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const [publicationScheduledAt, setPublicationScheduledAt] = useState("");
   const [linkedinMode, setLinkedinMode] = useState("post");
   const [tiktokMode, setTiktokMode] = useState("draft");
-  const [, setPosts] = useState([]);
+  const [posts, setPosts] = useState([]);
+  const [manualUrls, setManualUrls] = useState({});
+  const [masters, setMasters] = useState([]);
+  const [masterId, setMasterId] = useState("");
+  const [masterTitle, setMasterTitle] = useState("");
+  const [editorialFormat, setEditorialFormat] = useState("post");
+  useEffect(() => {
+    api("/editorial/masters").then(result => setMasters(result.masters || [])).catch(error => setError(error.message));
+  }, []);
+  async function approveMaster() {
+    setBusy("master");
+    setError("");
+    try {
+      const result = await api("/editorial/masters", { method: "POST", body: JSON.stringify({ title: masterTitle, caption, captionHtml, imageUrl }) });
+      setMasters(current => [result.master, ...current]);
+      setMasterId(result.master.id);
+      setMessage("Original aprobado y guardado. Las versiones posteriores no lo modifican.");
+    } catch (error) { setError(error.message); }
+    finally { setBusy(""); }
+  }
+  function loadMaster(id) {
+    setMasterId(id);
+    const master = masters.find(item => item.id === id);
+    if (!master) return;
+    setMasterTitle(master.title);
+    setCaption(master.caption);
+    setCaptionHtml(sanitizeCaptionHtml(master.captionHtml || generatedTextToCaptionHtml(master.caption)));
+    setImageUrl(master.imageUrl || "");
+    setMediaSource(null);
+  }
   const [savedDraft, setSavedDraft] = useState(readPublicationDraft);
   const [blogArticles, setBlogArticles] = useState([]);
   const [blogArticleDraft, setBlogArticleDraft] = useState({
@@ -4976,6 +5009,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
 
   useEffect(() => {
     if (draftCaption?.source !== "publication") return;
+    setMasterId(draftCaption.masterId || "");
+    setMasterTitle("");
+    setEditorialFormat(draftCaption.editorialFormat || "post");
     setCaption(String(draftCaption.caption || draftCaption.text || ""));
     setCaptionHtml(String(draftCaption.captionHtml || ""));
     const nextMediaUrl = draftCaption.imageUrl || draftCaption.videoUrl || "";
@@ -5286,6 +5322,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           action,
           targetId: selectedTarget.id,
           target: selectedTarget,
+          masterId,
+          editorialFormat,
           caption,
           captionHtml,
           imageUrl: mediaUrl,
@@ -5307,7 +5345,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           },
         }),
       });
-	      setPosts((current) => [result.post, ...current].slice(0, 8));
+	      setPosts((current) => [result.post, ...current.filter(post => post.id !== result.post.id)]);
 	      onPublicationSaved?.();
 	      const learnedSignals = result.memory ? publicationLearningSignals(result.post) : [];
 	      setMessage([
@@ -5321,10 +5359,27 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     }
   }
 
+  async function confirmManualPost(post) {
+    setBusy("manual-confirm");
+    setError("");
+    try {
+      const result = await api(`/publications/posts/${encodeURIComponent(post.id)}/confirm`, {
+        method: "POST", body: JSON.stringify({ url: manualUrls[post.id] || "" }),
+      });
+      setPosts(current => current.map(item => item.id === post.id ? result.post : item));
+      setMessage("Publicación confirmada por ti y URL registrada.");
+      onPublicationSaved?.();
+    } catch (error) { setError(error.message); }
+    finally { setBusy(""); }
+  }
+
   function currentPublicationDraftPayload() {
     return {
       targetId: selectedTarget.id,
       targetName: selectedTarget.name,
+      masterId,
+      masterTitle,
+      editorialFormat,
       caption,
       captionHtml,
       imageUrl,
@@ -5351,6 +5406,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     const draft = savedDraft || readPublicationDraft();
     if (!draft) return;
     setSelectedTargetId(draft.targetId || "instagram");
+    setMasterId(draft.masterId || "");
+    setMasterTitle(draft.masterTitle || "");
+    setEditorialFormat(draft.editorialFormat || "post");
     setCaption(String(draft.caption || ""));
     setCaptionHtml(String(draft.captionHtml || ""));
     setImageUrl(String(draft.imageUrl || ""));
@@ -5375,6 +5433,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   }
 
   function reset() {
+    setMasterId("");
+    setMasterTitle("");
+    setEditorialFormat("post");
     setCaption("");
     setCaptionHtml("");
     setImageUrl("");
@@ -5422,6 +5483,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
     setMessage("");
   }
 
+  const manualTarget = ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(selectedTarget.id);
   const isVideoTarget = ["youtube", "tiktok"].includes(selectedTarget.id);
   const selectedChannel = (channelStatus?.channels || []).find((channel) => channel.id === selectedTarget.id);
   const targetPending = ["pending", "attention"].includes(selectedChannel?.level || "") && selectedTarget.id === "pinterest";
@@ -5429,6 +5491,7 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
   const selectedMediaAspect = PUBLICATION_MEDIA_ASPECTS.find((option) => option.id === mediaAspect) || PUBLICATION_MEDIA_ASPECTS[0];
   const previewMediaFit = "contain";
   const publishButtonLabel = (() => {
+    if (manualTarget) return "PREPARAR PUBLICACIÓN";
     if (!selectedTarget.webhookPath) return "CONFIGURA ENTREGA";
     if (targetPending) return "PENDIENTE CONFIG";
     if (selectedTarget.id === "tiktok" && tiktokMode === "draft") return "PREPARAR PARA REVISAR";
@@ -5544,9 +5607,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                           ? "Worker asistido: deja el vídeo preparado para revisar en TikTok."
                         : target.id === "pinterest"
                           ? "Publicación directa por Pinterest API."
-                      : target.webhookPath ? "Destino preparado para entregar publicaciones." : "Configura la entrega para activar publicaciones."}
+                      : ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(target.id) ? "Preparación y publicación manual con confirmación." : target.webhookPath ? "Destino preparado para entregar publicaciones." : "Configura la entrega para activar publicaciones."}
                   </span>
-                  <b>{(channelStatus?.channels || []).find((channel) => channel.id === target.id)?.level === "pending" ? "PENDIENTE" : target.webhookPath ? "ABRIR" : "CONFIGURAR"}</b>
+                  <b>{(channelStatus?.channels || []).find((channel) => channel.id === target.id)?.level === "pending" ? "PENDIENTE" : target.webhookPath || ["substack", "substack-notes", "linkedin-newsletter", "medium", "reddit"].includes(target.id) ? "ABRIR" : "CONFIGURAR"}</b>
                 </button>
               ))}
             </div>
@@ -5763,6 +5826,26 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                     </div>
                   </div>
                 )}
+                <div className="blog-article-fields">
+                  <label>Artículo maestro
+                    <select value={masterId} onChange={event => loadMaster(event.target.value)}>
+                      <option value="">Sin vincular</option>
+                      {masters.map(master => <option key={master.id} value={master.id}>{master.title}</option>)}
+                    </select>
+                  </label>
+                  <label>Título editorial
+                    <input value={masterTitle} onChange={event => setMasterTitle(event.target.value)} placeholder="Título del original" />
+                  </label>
+                  <Button type="button" disabled={Boolean(busy) || !masterTitle.trim() || !caption.trim()} onClick={approveMaster}>APROBAR COMO NUEVO ORIGINAL</Button>
+                  <label>Formato
+                    <select value={editorialFormat} onChange={event => setEditorialFormat(event.target.value)}>
+                      <option value="post">Publicación breve</option>
+                      <option value="article">Artículo</option>
+                      <option value="newsletter">Newsletter</option>
+                    </select>
+                  </label>
+                  {masterId && <p>Versión vinculada. Editar este texto no modifica el original.</p>}
+                </div>
                 <FormattedTextarea
                   className="instagram-caption"
                   value={caption}
@@ -5815,13 +5898,30 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
                   <Button
                     type="button"
                     kind="primary"
-                    disabled={disabled || !selectedTarget.webhookPath || targetPending || preflightBlocked}
+                    disabled={disabled || (!manualTarget && !selectedTarget.webhookPath) || targetPending || preflightBlocked}
                     onClick={() => (selectedTarget.id === "blog" && blogArticleDraft.slug ? saveBlogArticleEdit() : submit("publish"))}
                   >
                     {busy === "publish" || busy === "blog-save"
                       ? (selectedTarget.id === "tiktok" && tiktokMode === "draft" ? "PREPARANDO..." : "PUBLICANDO...")
                       : selectedTarget.id === "blog" && blogArticleDraft.slug ? "ACTUALIZAR BLOG" : publishButtonLabel}
                   </Button>
+                  {manualTarget && <>
+                    <Button type="button" disabled={!caption.trim()} onClick={async () => {
+                      try {
+                        await copyRichText({ text: caption, html: sanitizeCaptionHtml(captionHtml || generatedTextToCaptionHtml(caption)) });
+                        setMessage("Contenido copiado.");
+                      } catch (error) { setError(error.message); }
+                    }}>COPIAR CONTENIDO</Button>
+                    <a href={manualPublicationUrl(selectedTarget)} target="_blank" rel="noopener noreferrer">Abrir {selectedTarget.name}</a>
+                    <p>Publica en la plataforma y registra después el enlace real.</p>
+                    {posts.filter(post => (post.targetId || post.target?.id) === selectedTarget.id && post.status === "pending_confirmation").map(post => (
+                      <div key={post.id}>
+                        <p>{String(post.caption || "").slice(0, 120)}</p>
+                        <input type="url" placeholder="URL HTTPS de la publicación" value={manualUrls[post.id] || ""} onChange={event => setManualUrls(current => ({ ...current, [post.id]: event.target.value }))} />
+                        <Button type="button" disabled={Boolean(busy) || !manualUrls[post.id]} onClick={() => confirmManualPost(post)}>CONFIRMAR PUBLICADO</Button>
+                      </div>
+                    ))}
+                  </>}
                   <Button type="button" onClick={reset}>LIMPIAR</Button>
                 </div>
 
@@ -6553,6 +6653,44 @@ function GoogleAdsWizard() {
   );
 }
 
+function EditorialMetrics({ year, month }) {
+  const period = year + "-" + String(month).padStart(2, "0");
+  const [entries, setEntries] = useState([]);
+  const [channel, setChannel] = useState("Substack");
+  const [values, setValues] = useState({});
+  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api("/editorial/metrics").then(result => setEntries(result.entries || [])).catch(error => setStatus(error.message));
+  }, []);
+  useEffect(() => {
+    setValues(entries.find(row => row.period === period && row.channel === channel) || {});
+  }, [entries, period, channel]);
+  async function save(event) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const result = await api("/editorial/metrics", { method: "PUT", body: JSON.stringify({ ...values, period, channel }) });
+      setEntries(result.entries || []);
+      setStatus("Datos guardados.");
+    } catch (error) { setStatus(error.message); }
+    finally { setSaving(false); }
+  }
+  return <form className="panel stats-editor" onSubmit={save}>
+    <div className="panel-heading"><div><strong>Audiencia e ingresos</strong><small>Datos manuales de la plataforma. Vacío significa desconocido.</small></div></div>
+    <div className="blog-article-fields">
+      <label>Canal<select value={channel} onChange={event => setChannel(event.target.value)}>
+        {["Substack", "LinkedIn Newsletter", "Medium", "Reddit", "Substack Notes", "LinkedIn", "Pinterest", "Blog"].map(name => <option key={name}>{name}</option>)}
+      </select></label>
+      {Object.entries({ freeSubscribers: "Suscriptores gratuitos al cierre", paidSubscribers: "Suscriptores de pago al cierre", revenue: "Ingresos del mes (€)", leads: "Oportunidades comerciales del mes" }).map(([key, label]) =>
+        <label key={key}>{label}<input type="number" min="0" step={key === "revenue" ? "0.01" : "1"} value={values[key] ?? ""} onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} /></label>
+      )}
+    </div>
+    <Button disabled={saving}>GUARDAR AUDIENCIA</Button>
+    <p role="status">{status}</p>
+  </form>;
+}
+
 function StatsDashboard() {
   const campaignBuilderRef = useRef(null);
   const currentYear = new Date().getFullYear();
@@ -6927,6 +7065,7 @@ function StatsDashboard() {
             </footer>
           </form>
 
+          <EditorialMetrics year={selectedYear} month={selectedMonth} />
           <section className="panel stats-year">
             <div className="panel-heading">
               <span className="section-mark" />

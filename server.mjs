@@ -32,6 +32,8 @@ const publicationLibraryDirectory = path.join(dataDirectory, "publication-librar
 const publicationTargetsFile = path.join(dataDirectory, "publication-targets.json");
 const forumConfigFile = path.join(dataDirectory, "forum-config.json");
 const monthlyStatsFile = path.join(dataDirectory, "monthly-stats.json");
+const editorialMastersFile = path.join(dataDirectory, "editorial-masters.json");
+const editorialMetricsFile = path.join(dataDirectory, "editorial-metrics.json");
 const campaignUrlsFile = path.join(dataDirectory, "campaign-urls.json");
 const visualAnalysisCacheFile = path.join(dataDirectory, "visual-analysis-cache.json");
 const production = process.env.NODE_ENV === "production";
@@ -99,7 +101,16 @@ const disabledPublicationTargetIds = new Set([
   "face" + "book",
   "news" + "letter",
 ]);
+const manualEditorialTargets = [
+  { id: "substack", name: "Substack", kind: "newsletter", url: "https://substack.com/" },
+  { id: "substack-notes", name: "Substack Notes", kind: "publicación breve", url: "https://substack.com/notes" },
+  { id: "linkedin-newsletter", name: "LinkedIn Newsletter", kind: "newsletter", url: "https://www.linkedin.com/" },
+  { id: "medium", name: "Medium", kind: "artículo", url: "https://medium.com/new-story" },
+  { id: "reddit", name: "Reddit", kind: "comunidad", url: "https://www.reddit.com/" },
+];
+const manualEditorialTargetIds = new Set(manualEditorialTargets.map(target => target.id));
 const defaultPublicationTargets = [
+  ...manualEditorialTargets.map(target => ({ ...target, handle: target.url, color: "#4a7ab5", icon: "✎", webhookPath: "", builtIn: true })),
   {
     id: "instagram",
     name: "Instagram",
@@ -2688,6 +2699,7 @@ async function publicationPreflight(payload, workerHealth = null) {
   const ok = (id, label, detail = "") => add(id, label, "ok", detail);
   const warn = (id, label, detail = "") => add(id, label, "warn", detail);
   const block = (id, label, detail = "") => add(id, label, "block", detail);
+  if (manualEditorialTargetIds.has(targetId)) warn("manual", "Publicación manual", "Copia el contenido y publícalo en la plataforma; Flow no lo marcará como publicado automáticamente.");
   if (!String(payload?.caption || "").trim()) block("caption", "Falta texto", "Escribe un caption antes de publicar.");
   else ok("caption", "Texto OK", `${String(payload.caption || "").length} caracteres.`);
   if (targetId === "youtube") {
@@ -4546,7 +4558,8 @@ app.post("/api/publications/preflight", requireAuth, async (req, res) => {
   try {
     const targets = await readPublicationTargets();
     const requestedTargetId = String(req.body?.targetId || req.body?.target?.id || "instagram");
-    const target = targets.find((item) => item.id === requestedTargetId) || targets.find((item) => item.id === "instagram");
+    const target = targets.find((item) => item.id === requestedTargetId);
+    if (!target) return res.status(400).json({ error: "Destino de publicación desconocido" });
     const payload = cleanPublicationPayload({ ...req.body, action: req.body?.action || "publish", target });
     res.json({ ok: true, ...(await publicationPreflight(payload)) });
   } catch (error) {
@@ -5791,12 +5804,73 @@ async function handlePublicationPosts(_, res) {
   try {
     const posts = await readPublicationPosts();
     await syncPublishedCalendarTasks(posts);
-    res.json({ posts: posts.slice(0, 50) });
+    res.json({ posts });
   } catch (error) {
     res.status(500).json({ error: `No se pudieron leer las publicaciones: ${error.message}` });
   }
 }
 
+async function readEditorialRecords(file) {
+  try {
+    const data = JSON.parse(await fs.readFile(file, "utf8"));
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+let editorialWriteQueue = Promise.resolve();
+function mutateEditorialRecords(file, change) {
+  const work = editorialWriteQueue.then(async () => {
+    const records = await readEditorialRecords(file);
+    const result = change(records);
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const tmp = file + "." + crypto.randomUUID() + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(records, null, 2), { mode: 0o600 });
+    await fs.rename(tmp, file);
+    return result;
+  });
+  editorialWriteQueue = work.catch(() => {});
+  return work;
+}
+app.get("/api/editorial/masters", requireAuth, async (_, res) => {
+  try { res.json({ masters: await readEditorialRecords(editorialMastersFile) }); }
+  catch { res.status(500).json({ error: "No se pudieron leer los artículos maestros" }); }
+});
+app.post("/api/editorial/masters", requireAuth, async (req, res) => {
+  const title = String(req.body?.title || "").trim().slice(0, 250);
+  const caption = String(req.body?.caption || "").trim();
+  if (!title || !caption || caption.length > 200000) return res.status(400).json({ error: "Indica título y texto válido" });
+  const master = { id: crypto.randomUUID(), title, caption, captionHtml: cleanPublicationHtml(req.body?.captionHtml), imageUrl: safeUrl(req.body?.imageUrl), approvedAt: new Date().toISOString() };
+  try {
+    await mutateEditorialRecords(editorialMastersFile, records => records.unshift(master));
+    res.status(201).json({ master });
+  } catch { res.status(500).json({ error: "No se pudo guardar el artículo maestro" }); }
+});
+app.get("/api/editorial/metrics", requireAuth, async (_, res) => {
+  try { res.json({ entries: await readEditorialRecords(editorialMetricsFile) }); }
+  catch { res.status(500).json({ error: "No se pudieron leer las métricas editoriales" }); }
+});
+app.put("/api/editorial/metrics", requireAuth, async (req, res) => {
+  const period = String(req.body?.period || "");
+  const channel = String(req.body?.channel || "").trim().slice(0, 80);
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(period) || !channel) return res.status(400).json({ error: "Periodo o canal inválido" });
+  const entry = { period, channel, updatedAt: new Date().toISOString() };
+  for (const key of ["freeSubscribers", "paidSubscribers", "revenue", "leads"]) {
+    const raw = req.body?.[key];
+    const value = raw === "" || raw == null ? null : Number(raw);
+    if (value !== null && (!Number.isFinite(value) || value < 0 || (key !== "revenue" && !Number.isInteger(value)))) return res.status(400).json({ error: "Métrica inválida" });
+    entry[key] = value;
+  }
+  try {
+    const entries = await mutateEditorialRecords(editorialMetricsFile, records => {
+      const index = records.findIndex(row => row.period === period && row.channel === channel);
+      if (index >= 0) records[index] = entry; else records.push(entry);
+      return records;
+    });
+    res.json({ entries });
+  } catch { res.status(500).json({ error: "No se pudieron guardar las métricas" }); }
+});
 app.get("/api/publications/posts", requireAuth, handlePublicationPosts);
 app.get("/api/instagram/posts", requireAuth, handlePublicationPosts);
 
@@ -5997,8 +6071,21 @@ app.post("/api/publications/posts/:id/confirm", requireAuth, async (req, res) =>
     const index = posts.findIndex((post) => post.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Publicación no encontrada" });
     const now = new Date().toISOString();
+    const manual = manualEditorialTargetIds.has(posts[index].targetId || posts[index].target?.id);
+    let finalUrl = posts[index].finalUrl || "";
+    if (manual) {
+      try {
+        const url = new URL(String(req.body?.url || ""));
+        if (url.protocol !== "https:" || url.username || url.password) throw new Error("invalid");
+        finalUrl = url.href;
+      } catch {
+        return res.status(400).json({ error: "Indica la URL HTTPS de la publicación real." });
+      }
+    }
     const post = {
       ...posts[index],
+      finalUrl,
+      publicUrl: finalUrl || posts[index].publicUrl,
       action: "publish",
       status: "published_by_user_confirmation",
       publishedAt: posts[index].publishedAt || now,
@@ -6287,13 +6374,20 @@ async function handlePublicationSubmit(req, res) {
     const requestedTargetId = String(req.body?.targetId || req.body?.target?.id || "instagram");
     const target = targets.find((item) => item.id === requestedTargetId) || targets.find((item) => item.id === "instagram");
     payload = cleanPublicationPayload({ ...req.body, target });
+    const masterId = String(req.body?.masterId || "");
+    if (masterId) {
+      const masters = await readEditorialRecords(editorialMastersFile);
+      if (!masters.some(master => master.id === masterId)) return res.status(400).json({ error: "Artículo maestro inexistente" });
+      payload.masterId = masterId;
+    }
+    payload.editorialFormat = ["post", "article", "newsletter"].includes(req.body?.editorialFormat) ? req.body.editorialFormat : "post";
     if (!payload.caption) {
       return res.status(400).json({ error: "El caption es obligatorio" });
     }
     if (["review", "schedule"].includes(payload.action) && !payload.scheduledAt) {
       return res.status(400).json({ error: "Elige una fecha válida para programar" });
     }
-    if (["schedule", "publish"].includes(payload.action) && !payload.target.webhookPath) {
+    if (["schedule", "publish"].includes(payload.action) && !payload.target.webhookPath && !(payload.action === "publish" && manualEditorialTargetIds.has(payload.target.id))) {
       return res.status(400).json({ error: `El destino ${payload.target.name} no tiene webhook n8n configurado` });
     }
 
@@ -6325,7 +6419,9 @@ async function handlePublicationSubmit(req, res) {
 
     let flowResult = null;
     if (payload.action === "publish") {
-      flowResult = await publishPublicationPayload(payload);
+      flowResult = manualEditorialTargetIds.has(payload.target.id)
+        ? { status: "pending_confirmation", deliveryMode: "manual", message: "Preparado; falta publicar y confirmar en la plataforma." }
+        : await publishPublicationPayload(payload);
     }
 
     const now = new Date().toISOString();

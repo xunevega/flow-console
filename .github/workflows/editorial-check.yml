@@ -1,0 +1,19 @@
+name: Editorial build check
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [editorial-distribution]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: node --check server.mjs
+      - run: npm run build
