@@ -10,18 +10,62 @@ const manana = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().sl
 
 // Redes que Flow puede programar en el calendario (las demás se copian y se publican a mano).
 const PROGRAMABLES = { linkedin: "LinkedIn" };
+const DESTINOS = { linkedin:"https://www.linkedin.com/feed/", linkedin_article:"https://www.linkedin.com/", linkedin_newsletter:"https://www.linkedin.com/", substack:"https://substack.com/", substack_notes:"https://substack.com/notes", medium:"https://medium.com/new-story", reddit:"https://www.reddit.com/", pinterest:"https://www.pinterest.com/pin-builder/", instagram:"https://www.instagram.com/", youtube:"https://studio.youtube.com/", youtube_long:"https://studio.youtube.com/", tiktok:"https://www.tiktok.com/upload", reels:"https://www.instagram.com/" };
+const FORMATOS = { blog:[1200,628],linkedin:[1200,628],linkedin_article:[1200,628],linkedin_newsletter:[1200,628],substack:[1200,628],substack_notes:[1080,1080],medium:[1200,628],reddit:[1200,628],pinterest:[1000,1500],instagram:[1080,1350],youtube_long:[1920,1080],youtube:[1080,1920],tiktok:[1080,1920],reels:[1080,1920] };
+const VIDEO = new Set(["youtube","youtube_long","tiktok","reels"]);
+async function adaptarImagen(nombre, red) {
+  const img = new Image();
+  await new Promise((resolve,reject) => { img.onload=resolve; img.onerror=()=>reject(new Error("No se pudo leer la portada")); img.src="/media/publications/"+encodeURIComponent(nombre); });
+  const [w,h] = FORMATOS[red] || FORMATOS.blog;
+  const canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+  const ctx=canvas.getContext("2d"); if (!ctx) throw new Error("No se pudo adaptar la imagen");
+  const scale=Math.min(w/img.naturalWidth,h/img.naturalHeight);
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,w,h);
+  ctx.drawImage(img,(w-img.naturalWidth*scale)/2,(h-img.naturalHeight*scale)/2,img.naturalWidth*scale,img.naturalHeight*scale);
+  return canvas.toDataURL("image/jpeg",0.92);
+}
 
 function Estado({ ok, si, no }) {
   return <span className={`vis-estado ${ok ? "ok" : "mal"}`}>{ok ? si : no}</span>;
 }
 
-function Version({ red, nombre, textoVersion, titulo, api, avisar }) {
+function Version({ red, nombre, textoVersion, titulo, api, avisar, articulo, imagen }) {
+  const [texto, setTexto] = useState(textoVersion);
+  const [media, setMedia] = useState(articulo.medios?.[red] || "");
+  const [enlace, setEnlace] = useState(articulo.enlaces?.[red] || "");
+  const [trabajando,setTrabajando] = useState(false);
+  useEffect(()=>setTexto(textoVersion),[textoVersion]);
+  async function guardarVersion() {
+    setTrabajando(true);
+    try { await api(`/visibilidad/borradores/${articulo.id}/versiones/${red}`,{method:"PATCH",body:JSON.stringify({texto})}); setHecho("Versión guardada"); }
+    catch(e){avisar(e.message,true);} finally{setTrabajando(false);}
+  }
+  async function guardarMedia(dataUrl,type,name) {
+    const r=await api("/publications/media",{method:"POST",body:JSON.stringify({dataUrl,type,name,targetId:"blog"})});
+    if(!r.fileName) throw new Error("No se recibió el archivo");
+    await api(`/visibilidad/borradores/${articulo.id}/medios/${red}`,{method:"PUT",body:JSON.stringify({nombre:r.fileName})});
+    setMedia(r.fileName);
+  }
+  async function adaptar() {
+    setTrabajando(true);
+    try{await guardarMedia(await adaptarImagen(imagen,red),"image/jpeg",red+".jpg");setHecho("Imagen adaptada");}catch(e){avisar(e.message,true);}finally{setTrabajando(false);}
+  }
+  async function subirVideo(event) {
+    const f=event.target.files?.[0];event.target.value="";if(!f)return;
+    if(!["video/mp4","video/webm","video/quicktime"].includes(f.type)||f.size>100*1024*1024){avisar("Vídeo MP4, MOV o WebM de hasta 100 MB.",true);return;}
+    setTrabajando(true);
+    try{const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f);});await guardarMedia(data,f.type,f.name);setHecho("Vídeo adjuntado");}catch(e){avisar(e.message,true);}finally{setTrabajando(false);}
+  }
+  async function confirmar() {
+    setTrabajando(true);
+    try{await api(`/visibilidad/borradores/${articulo.id}/enlaces/${red}`,{method:"PUT",body:JSON.stringify({url:enlace})});setHecho("Publicación registrada por ti");}catch(e){avisar(e.message,true);}finally{setTrabajando(false);}
+  }
   const [dia, setDia] = useState(manana);
   const [hora, setHora] = useState("10:00");
   const [hecho, setHecho] = useState("");
   const copiar = async () => {
     try {
-      await navigator.clipboard.writeText(textoVersion);
+      await navigator.clipboard.writeText(texto);
       setHecho("Copiado");
     } catch {
       setHecho("No se pudo copiar");
@@ -31,7 +75,7 @@ function Version({ red, nombre, textoVersion, titulo, api, avisar }) {
     try {
       await api("/calendar/tasks", {
         method: "POST",
-        body: JSON.stringify({ title: `${nombre}: ${titulo}`.slice(0, 180), notes: textoVersion, dueDate: dia, time: hora, project: PROGRAMABLES[red] }),
+        body: JSON.stringify({ title: `${nombre}: ${titulo}`.slice(0, 180), notes: texto, dueDate: dia, time: hora, project: PROGRAMABLES[red] }),
       });
       setHecho(`Programado el ${dia} a las ${hora}`);
     } catch (error) {
@@ -46,7 +90,16 @@ function Version({ red, nombre, textoVersion, titulo, api, avisar }) {
           <button type="button" className="button ghost" onClick={copiar}>Copiar</button>
         </div>
       </header>
-      <pre>{textoVersion}</pre>
+      <textarea rows={8} value={texto} onChange={e=>setTexto(e.target.value)} />
+      <div className="vis-acciones">
+        <button type="button" className="button ghost" disabled={trabajando||!texto.trim()} onClick={guardarVersion}>Guardar versión</button>
+        {DESTINOS[red] && <a href={DESTINOS[red]} target="_blank" rel="noreferrer">Abrir plataforma</a>}
+        {imagen && !VIDEO.has(red) && <button type="button" className="button ghost" disabled={trabajando} onClick={adaptar}>Adaptar imagen {FORMATOS[red]?.join(" × ")}</button>}
+      </div>
+      {VIDEO.has(red) && <label>Adjuntar vídeo (guion preparado, montaje externo)<input type="file" accept="video/mp4,video/webm,video/quicktime" onChange={subirVideo} disabled={trabajando}/></label>}
+      {media && (VIDEO.has(red) ? <video controls src={"/media/publications/"+encodeURIComponent(media)} style={{maxWidth:"100%"}}/> : <img src={"/media/publications/"+encodeURIComponent(media)} alt="Versión visual" style={{maxWidth:220,maxHeight:220}}/>)}
+      {media && <a href={"/media/publications/"+encodeURIComponent(media)} download>Descargar archivo</a>}
+      {DESTINOS[red] && <div className="vis-acciones"><input type="url" placeholder="URL de la publicación real" value={enlace} onChange={e=>setEnlace(e.target.value)}/><button type="button" className="button ghost" disabled={trabajando||!enlace.trim()} onClick={confirmar}>Registrar publicada</button></div>}
       {PROGRAMABLES[red] && (
         <div className="vis-programar">
           <input type="date" value={dia} onChange={(e) => setDia(e.target.value)} />
@@ -66,6 +119,16 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
   const [cuerpo, setCuerpo] = useState(b.cuerpo);
   const [imagen, setImagen] = useState(b.imagen || "");
   const [biblioteca, setBiblioteca] = useState([]);
+  const [elegidos,setElegidos]=useState(Object.keys(redes));
+  const preparar = async () => {
+    setOcupado("versiones");
+    try {
+      if(cambiado) await api(`/visibilidad/borradores/${b.id}`,{method:"PATCH",body:JSON.stringify({titulo,descripcion,cuerpo,imagen})});
+      const r=await api(`/visibilidad/borradores/${b.id}/versiones`,{method:"POST",body:JSON.stringify({canales:elegidos})});
+      await recargar();
+      avisar(r.errorVersiones ? "Faltan versiones: "+r.errorVersiones : "Versiones preparadas. Todavía no se han publicado.",Boolean(r.errorVersiones));
+    }catch(e){avisar(e.message,true);}finally{setOcupado("");}
+  };
   const cargarBiblioteca = async () => {
     try { const r = await api("/visibilidad/imagenes"); setBiblioteca(r.imagenes || []); }
     catch (error) { avisar(error.message, true); }
@@ -160,7 +223,7 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
               </div>
             </div>
           <div className="vis-acciones">
-            <button type="button" className="button" onClick={publicar} disabled={Boolean(ocupado)}>{ocupado === "publicar" ? "Publicando…" : "Aprobar y publicar"}</button>
+            <button type="button" className="button" onClick={publicar} disabled={Boolean(ocupado)}>{ocupado === "publicar" ? "Publicando…" : "Publicar en el blog"}</button>
             <button type="button" className="button ghost" onClick={guardar} disabled={!cambiado || Boolean(ocupado)}>Guardar cambios</button>
             <button type="button" className="button ghost" onClick={borrar} disabled={Boolean(ocupado)}>Descartar</button>
           </div>
@@ -176,13 +239,16 @@ function Borrador({ b, fichas, redes, api, recargar, avisar }) {
           </p>
           {b.lecciones?.length > 0 && <p className="est-pie">Aprendido de tus cambios: {b.lecciones.join(" · ")}</p>}
           {b.errorVersiones && <p className="vis-error">No se pudieron preparar las versiones: {b.errorVersiones}</p>}
-          <div className="vis-versiones">
-            {Object.entries(b.versiones || {}).map(([red, t]) => (
-              <Version key={red} red={red} nombre={redes[red] || red} textoVersion={t} titulo={b.titulo} api={api} avisar={avisar} />
-            ))}
-          </div>
+
         </div>
       )}
+      {abierto && <div className="vis-editor">
+        <h3>Distribuir artículo</h3>
+        <div className="vis-acciones">{Object.entries(redes).map(([red,nombre])=><label key={red}><input type="checkbox" checked={elegidos.includes(red)} onChange={e=>setElegidos(current=>e.target.checked?[...current,red]:current.filter(k=>k!==red))}/>{nombre}</label>)}</div>
+        <button type="button" className="button" disabled={Boolean(ocupado)||!elegidos.length||!cuerpo.trim()} onClick={preparar}>{ocupado==="versiones"?"Preparando…":"Preparar todos los destinos seleccionados"}</button>
+        {b.errorVersiones && <p className="vis-error">Versiones pendientes: {b.errorVersiones}</p>}
+        <div className="vis-versiones">{Object.entries(b.versiones||{}).map(([red,t])=><Version key={red} red={red} nombre={redes[red]||red} textoVersion={t} titulo={b.titulo} api={api} avisar={avisar} articulo={b} imagen={imagen}/>)}</div>
+      </div>}
     </article>
   );
 }
@@ -202,7 +268,7 @@ function Fichas({ fichas, api, recargar, avisar }) {
   };
   return (
     <details className="panel est-panel vis-fichas">
-      <summary>Fichas de producto · lo único que Flow puede afirmar en un artículo</summary>
+      <summary>Documentación de productos propios · solo para artículos que hablen de ellos</summary>
       {lista.map((f, i) => (
         <fieldset key={f.id || i}>
           <div className="vis-fila">
@@ -295,7 +361,7 @@ export default function Visibilidad({ api }) {
 
         <p className="est-frase">
           Flow mira qué se busca en Google y Bing, propone artículos que llevan a lo que haces y los escribe con los datos de tus fichas.
-          Tú eliges, repasas y apruebas: Flow publica en el blog, avisa a los buscadores y te deja cada red preparada.
+          También puedes escribir temas libres. Prepara los destinos antes de publicar y revisa cada versión.
         </p>
 
         {mensaje.texto && <div className={`publication-feedback ${mensaje.error ? "error" : "success"}`}>{mensaje.texto}</div>}
