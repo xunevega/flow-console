@@ -538,6 +538,29 @@ export function montarVisibilidad(app, dependencias) {
     await guardar(datos);
     return b;
   }));
+  for (const tipo of ["medios","enlaces"]) {
+    app.put("/api/visibilidad/borradores/:id/"+tipo+"/:canal", requireAuth, responder(async req => {
+      const datos = await leer();
+      const b = datos.borradores.find(x=>x.id===req.params.id);
+      const canal=req.params.canal;
+      if(!b || !Object.hasOwn(REGLAS_CANAL,canal) || !b.versiones?.[canal]) throw new Error("Versión no encontrada.");
+      let valor;
+      if(tipo==="medios"){
+        valor=String(req.body?.nombre||"");
+        const video=["youtube","youtube_long","tiktok","reels"].includes(canal);
+        const patron=video?/^[a-f0-9-]{36}\.(mp4|webm|mov)$/i:/^[a-f0-9-]{36}\.(jpg|png|webp)$/i;
+        if(!patron.test(valor)) throw new Error("Archivo no válido para este destino.");
+        await fs.access(path.join(d.publicationMediaDirectory,valor));
+      } else {
+        const url=new URL(String(req.body?.url||""));
+        if(url.protocol!=="https:"||url.username||url.password||url.pathname==="/") throw new Error("Indica el enlace HTTPS de la publicación real.");
+        valor=url.href;
+      }
+      b[tipo]={...b[tipo],[canal]:valor};
+      await guardar(datos);
+      return b;
+    }));
+  }
   app.post("/api/visibilidad/borradores/:id/publicar", requireAuth, responder((req) => publicarBorrador(req.params.id, d.publicOrigin ? d.publicOrigin(req) : "")));
 
   app.put("/api/visibilidad/fichas", requireAuth, responder(async (req) => {
