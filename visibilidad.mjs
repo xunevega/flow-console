@@ -228,6 +228,23 @@ async function articulosDelBlog() {
 }
 
 const seguro = (p) => p.then((v) => v, (e) => ({ estado: "error", detalle: e.message, filas: [] }));
+const canalesEditoriales = Object.fromEntries(Object.entries(REGLAS_CANAL).map(([k,v])=>[k,v.nombre]));
+export function normalizarRecomendaciones(lista) {
+  const vistos = new Set();
+  return (Array.isArray(lista)?lista:[]).filter(r=>r && Object.hasOwn(REGLAS_CANAL,r.canal) && !vistos.has(r.canal) && vistos.add(r.canal)).map(r=>({
+    canal:r.canal, prioridad:["prioritario","recomendado","opcional","no_recomendado"].includes(r.prioridad)?r.prioridad:"opcional",
+    motivo:texto(r.motivo,300), formato:texto(r.formato,150), momento:texto(r.momento,120)
+  }));
+}
+async function recomendarArticulo(b) {
+  const respuesta=await d.openaiChat({model:d.openaiTextModel,json:true,temperature:0.3,maxTokens:3000,messages:[
+    {role:"system",content:"Eres asesor editorial de una publicación independiente que empieza a construir lectores recurrentes. Recomienda dónde merece la pena publicar este artículo, no publicar por publicar. Substack y Medium para ensayos completos cuando encajen, LinkedIn para perspectivas profesionales, Reddit para debates pertinentes sin autopromoción, blog propio como archivo, Notes para ideas breves. Los vídeos solo si el autor decide producirlos. Diferencia recomendación editorial de datos reales; no inventes tendencias, métricas, reglas de comunidades ni horarios óptimos. Propón momento cualitativo (ahora, esta semana, atemporal) y explica por qué. Responde JSON con recomendaciones, cada una con canal, prioridad (prioritario, recomendado, opcional, no_recomendado), motivo, formato, momento."},
+    {role:"user",content:JSON.stringify({titulo:b.titulo,cuerpo:b.cuerpo,descripcion:b.descripcion,canales:canalesEditoriales})}
+  ]});
+  const recomendaciones=normalizarRecomendaciones(jsonDelModelo(respuesta.text).recomendaciones);
+  if(!recomendaciones.length)throw new Error("No se recibieron recomendaciones válidas.");
+  return recomendaciones;
+}
 
 export async function proponerIdeas() {
   const datos = await leer();
@@ -240,7 +257,7 @@ export async function proponerIdeas() {
     model: d.openaiTextModel,
     json: true,
     temperature: 0.5,
-    maxTokens: 1800,
+    maxTokens: 4500,
     messages: [
       {
         role: "system",
@@ -249,8 +266,9 @@ export async function proponerIdeas() {
       {
         role: "user",
         content: JSON.stringify({
-          tarea: "Propón 6 artículos nuevos: 4 de tipo «producto» y 2 de tipo «libre» (variados entre sí, no siempre sobre él ni sobre software). No repitas temas que ya están en el blog. Para los de tipo «producto»: Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Usa exclusivamente las fichas y las búsquedas disponibles.",
-          formato: { ideas: [{ tipo: "producto o libre", titulo: "título del artículo (en los de producto, con la búsqueda dentro)", busqueda: "lo que la persona teclearía, o vacío en los libres", producto: "id de la ficha, o vacío en los libres", porque: "una frase: por qué alguien lo buscaría y qué dato lo apoya (cita la búsqueda real si la hay)" }] },
+          tarea: "Propón 6 artículos nuevos, principalmente ensayos, divulgación y temas libres; incluye productos propios solo si aportan valor editorial. Varía temas y formatos. No repitas temas que ya están en el blog. Para los de tipo «producto»: Si hay búsquedas reales donde la web sale pero lejos (posición > 8) o con muchas impresiones y pocos clics, prioriza esas. Si no hay datos de búsquedas, elige huecos claros a partir de las fichas. Las fichas solo restringen afirmaciones sobre productos propios. Para temas libres usa criterio editorial, sin inventar noticias, datos de tendencias ni fuentes. Distingue oportunidades apoyadas en búsquedas reales de hipótesis editoriales. Recomienda destinos y momento de publicación para cada idea.",
+          formato: { ideas: [{ tipo: "producto o libre", titulo: "título del artículo (en los de producto, con la búsqueda dentro)", busqueda: "lo que la persona teclearía, o vacío en los libres", producto: "id de la ficha, o vacío en los libres", porque: "por qué interesa y qué dato real lo apoya, o indicar hipótesis editorial", recomendaciones: [{canal:"id de canal",prioridad:"prioritario|recomendado|opcional|no_recomendado",motivo:"razón",formato:"formato",momento:"ahora, esta semana o atemporal"}] }] },
+          canales: canalesEditoriales,
           fichas: datos.fichas.map(({ id, nombre, para, hechos }) => ({ id, nombre, para, hechos })),
           busquedas_reales: busquedas,
           ya_en_el_blog: blog.map((a) => a.titulo),
@@ -268,6 +286,7 @@ export async function proponerIdeas() {
       busqueda: texto(i.busqueda, 160),
       producto: datos.fichas.some((f) => f.id === i.producto) ? i.producto : "",
       porque: texto(i.porque, 400),
+      recomendaciones: normalizarRecomendaciones(i.recomendaciones),
     }));
   datos.ideas = {
     fecha: new Date().toISOString(),
@@ -280,7 +299,7 @@ export async function proponerIdeas() {
 
 // ───────────────────────── 2. borrador ─────────────────────────
 
-export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "" }) {
+export async function escribirBorrador({ titulo, busqueda = "", producto = "", porque = "", recomendaciones = [] }) {
   const datos = await leer();
   const ficha = datos.fichas.find((f) => f.id === producto) || null;
   const voz = await instruccionVoz();
@@ -326,6 +345,7 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
     creado: ahora,
     actualizado: ahora,
     versiones: {},
+    recomendaciones: normalizarRecomendaciones(recomendaciones),
   };
   datos.borradores.unshift(borrador);
   datos.borradores = datos.borradores.slice(0, 60);
@@ -485,7 +505,7 @@ export function montarVisibilidad(app, dependencias) {
   app.post("/api/visibilidad/borradores", requireAuth, responder(async (req) => {
     const titulo = texto(req.body?.titulo, 160);
     if (!titulo) throw new Error("Falta el tema del artículo.");
-    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, tipo: req.body?.tipo === "libre" ? "libre" : "" });
+    return escribirBorrador({ titulo, busqueda: req.body?.busqueda, producto: req.body?.producto, porque: req.body?.porque, recomendaciones: req.body?.recomendaciones, tipo: req.body?.tipo === "libre" ? "libre" : "" });
   }));
 
   app.patch("/api/visibilidad/borradores/:id", requireAuth, responder(async (req) => {
@@ -511,6 +531,18 @@ export function montarVisibilidad(app, dependencias) {
     return { ok: true };
   }));
 
+  app.post("/api/visibilidad/borradores/:id/recomendaciones", requireAuth, responder(async req=>{
+    const datos=await leer();
+    const b=datos.borradores.find(x=>x.id===req.params.id);
+    if(!b || !b.cuerpo.trim())throw new Error("Artículo inexistente o vacío.");
+    const recomendaciones=await recomendarArticulo(b);
+    const actual=await leer();
+    const destino=actual.borradores.find(x=>x.id===b.id);
+    if(!destino || destino.titulo!==b.titulo || destino.cuerpo!==b.cuerpo)throw new Error("El artículo cambió durante el análisis.");
+    destino.recomendaciones=recomendaciones;
+    await guardar(actual);
+    return {recomendaciones};
+  }));
   app.post("/api/visibilidad/borradores/:id/versiones", requireAuth, responder(async req => {
     const datos = await leer();
     const b = datos.borradores.find(x => x.id === req.params.id);
