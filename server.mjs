@@ -2620,7 +2620,7 @@ function cleanPublicationPayload(value) {
   const captionHtml = cleanPublicationHtml(value?.captionHtml);
   const linkedinMode = value?.options?.linkedinMode === "article" || value?.linkedinMode === "article" ? "article" : "post";
   const tiktokMode = value?.options?.tiktokMode === "publish" || value?.tiktokMode === "publish" ? "publish" : "draft";
-  const mediaAspect = ["original", "1-1", "4-5", "16-9"].includes(value?.options?.mediaAspect) ? value.options.mediaAspect : "";
+  const mediaAspect = ["original", "1-1", "4-5", "16-9", "2-3", "1-91", "9-16"].includes(value?.options?.mediaAspect) ? value.options.mediaAspect : "";
   const mediaFit = ["cover", "contain"].includes(value?.options?.mediaFit) ? value.options.mediaFit : "";
   const rawMediaPosition = value?.options?.mediaPosition && typeof value.options.mediaPosition === "object" ? value.options.mediaPosition : null;
   const mediaPosition = rawMediaPosition
@@ -5745,7 +5745,7 @@ app.post("/api/generator", requireAuth, async (req, res) => {
       modo_edicion: editingMode,
       instrucciones: [
         generatorIntentInstruction(enrichedBody?.intencion),
-        generatorSourceMaterialInstruction(enrichedBody),
+        enrichedBody.editorialAdaptation === true ? "Adapta únicamente el material aprobado. Conserva tesis, hechos, voz e ironía; no inventes referencias, citas, experiencias ni datos. No amplíes salvo petición explícita." : generatorSourceMaterialInstruction(enrichedBody),
         existingInstructions,
         brain.instruction || generatorMemoryInstruction(memoryPayload),
       ].filter(Boolean).join("\n\n"),
