@@ -42,6 +42,8 @@ const PUBLICATION_PLATFORM_ICONS = {
 };
 const FORUM_WORKFLOW_PATTERN = /hn|hacker|indie hackers|quora|reddit|foro|forum|soroa|sora|community|comunidad/i;
 const PUBLICATION_MEDIA_ASPECTS = [
+  { id: "2-3", label: "2:3", ratio: 2 / 3, width: 1000, height: 1500, recommended: "Pinterest 1000 x 1500 px.", output: "Vertical" },
+  { id: "1-91", label: "1.91:1", ratio: 1200 / 628, width: 1200, height: 628, recommended: "Portada 1200 x 628 px.", output: "Apaisado" },
   { id: "original", label: "Original", ratio: null, recommended: "Mantiene el tamaño y proporción del archivo original.", output: "Sin recorte" },
   { id: "1-1", label: "1:1", ratio: 1, width: 1080, height: 1080, recommended: "Recomendado 1080 x 1080 px.", output: "Cuadrado" },
   { id: "4-5", label: "4:5", ratio: 4 / 5, width: 1080, height: 1350, recommended: "Recomendado 1080 x 1350 px.", output: "Vertical feed" },
@@ -389,7 +391,7 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
-async function formatPublicationImage(dataUrl, aspectId) {
+async function formatPublicationImage(dataUrl, aspectId, fit = "cover") {
   const format = PUBLICATION_MEDIA_ASPECTS.find((item) => item.id === aspectId);
   if (!format?.ratio) return dataUrl;
   const image = await loadImageFromDataUrl(dataUrl);
@@ -409,6 +411,13 @@ async function formatPublicationImage(dataUrl, aspectId) {
   canvas.height = Math.max(1, Math.round(format.height || cropHeight));
   const context = canvas.getContext("2d");
   if (!context) throw new Error("No se pudo recortar la imagen");
+  if (fit === "contain") {
+    const scale = Math.min(canvas.width / width, canvas.height / height);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, (canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2, width * scale, height * scale);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
   context.drawImage(
     image,
     Math.max(0, (width - cropWidth) / 2),
