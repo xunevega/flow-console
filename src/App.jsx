@@ -2990,6 +2990,20 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
     }
   }
 
+  const hoyPreparacion = dateKey(new Date());
+  const proximasAcciones = tasks.filter(task => !["done","ignored","prepared","cancelled","canceled"].includes(task.status) && /^\d{4}-\d{2}-\d{2}$/.test(task.dueDate || "")).map(task => {
+    const target = publicationTargetForTask(task,publicationTargets);
+    const desc = `${task.title || ""} ${task.project || ""} ${target?.name || ""}`.toLowerCase();
+    const editorial = target || /publica|art[ií]culo|newsletter|substack|medium|reddit|linkedin|pinterest|instagram|youtube|tiktok|reels|v[ií]deo|shorts/.test(desc);
+    const anticipacion = /v[ií]deo|youtube|tiktok|shorts|reels/.test(desc) ? 5 : /art[ií]culo|newsletter|substack|medium|blog/.test(desc) ? 3 : /pinterest|instagram|imagen/.test(desc) ? 2 : 1;
+    const fecha = new Date(task.dueDate+"T12:00:00");
+    fecha.setDate(fecha.getDate() - (editorial ? anticipacion : 1));
+    const inicio = dateKey(fecha);
+    const asociado = posts.find(post => String(post.calendarTaskId || post.taskId || "") === String(task.id) && (post.caption || post.videoUrl || post.imageUrl) && !/error|failed|cancel/i.test(post.status || "") && (post.action === "review" || post.action === "schedule" || post.action === "publish"));
+    return {task,target,editorial,inicio,asociado,anticipacion};
+  }).filter(item => !item.asociado).sort((a,b)=>a.inicio.localeCompare(b.inicio)||a.task.dueDate.localeCompare(b.task.dueDate));
+  const limitePreparacion = new Date(); limitePreparacion.setDate(limitePreparacion.getDate()+14);
+  const accionesVisibles = proximasAcciones.filter(item=>item.inicio<=dateKey(limitePreparacion));
   const selectedTitle = selectedDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
   const selectedDayItems = [
     ...selectedTasks.map((task) => ({ type: "task", task, date: `${task.dueDate}T${task.time || DEFAULT_TASK_TIME}:00` })),
@@ -3172,6 +3186,31 @@ function Calendar({ workflows, refreshToken = 0, focusDateKey = "", onOpenWorkfl
               })}
             </div>
           </aside>
+        </div>
+      </section>
+
+      <section className="panel" style={{marginTop:24,padding:"24px 32px"}}>
+        <div className="est-panel-cab"><h3>Próximas acciones</h3><small>Preparación · próximos 14 días</small></div>
+        <p className="est-pie">Organizado por cuándo empezar, no solo por cuándo publicar. Las tareas vencidas permanecen visibles.</p>
+        {!loading && !accionesVisibles.length && <p className="est-vacio">No hay preparaciones pendientes para las próximas dos semanas.</p>}
+        <div className="dashboard-event-list">
+          {accionesVisibles.map(({task,target,editorial,inicio,anticipacion})=>{
+            const urgente=inicio<=hoyPreparacion;
+            const vencida=task.dueDate<hoyPreparacion;
+            const fechaHumana=(v)=>new Date(v+"T12:00:00").toLocaleDateString("es-ES",{day:"numeric",month:"short"});
+            return <article key={task.id} className="dashboard-event-card">
+              <time><strong>{new Date(inicio+"T12:00:00").getDate()}</strong><span>{new Date(inicio+"T12:00:00").toLocaleDateString("es-ES",{month:"short"})}</span></time>
+              <div><strong>{task.title}</strong>
+                <p>{vencida?"Vencida":urgente?"Preparar hoy":"Empezar el "+fechaHumana(inicio)} · {editorial?"Publicación":"Fecha prevista"}: {fechaHumana(task.dueDate)} · {task.time||"12:00"}</p>
+                {task.notes && <p className="dashboard-task-hint">{task.notes}</p>}
+                <footer>
+                  {target && <button type="button" onClick={()=>openTaskPublication(task)}>Preparar contenido</button>}
+                  <button type="button" onClick={()=>selectDay(new Date(task.dueDate+"T12:00:00"))}>Ver en calendario</button>
+                  <button type="button" onClick={()=>updateTaskStatus(task,"done")}>Hecho</button>
+                </footer>
+              </div>
+            </article>;
+          })}
         </div>
       </section>
 
