@@ -357,9 +357,37 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
+// Las fotos del móvil o del Mac (4000 px, 6-15 MB) no van tal cual: LinkedIn e Instagram las
+// reducen a su manera (y a veces las recortan o las rechazan) y Flow corta cualquier envío de más
+// de 2 MB con un 413. Se dejan a un lado máximo de `maxSide` en JPEG; si ya caben, no se tocan.
+const PUBLICATION_MAX_SIDE = 2048;
+const GENERATOR_MAX_SIDE = 1600;
+const SMALL_DATA_URL = 1.5 * 1024 * 1024;
+
+async function shrinkImageDataUrl(dataUrl, maxSide = PUBLICATION_MAX_SIDE, quality = 0.9) {
+  if (!/^data:image\/(jpeg|png|webp)/i.test(String(dataUrl || ""))) return dataUrl;
+  const image = await loadImageFromDataUrl(dataUrl);
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (!width || !height) throw new Error("La imagen no tiene dimensiones válidas");
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  if (scale === 1 && dataUrl.length <= SMALL_DATA_URL) return dataUrl;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return dataUrl;
+  // JPEG no tiene transparencia: el fondo de un PNG transparente queda blanco, no negro.
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingQuality = "high";
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
 async function formatPublicationImage(dataUrl, aspectId) {
   const format = PUBLICATION_MEDIA_ASPECTS.find((item) => item.id === aspectId);
-  if (!format?.ratio) return dataUrl;
+  if (!format?.ratio) return shrinkImageDataUrl(dataUrl, PUBLICATION_MAX_SIDE);
   const image = await loadImageFromDataUrl(dataUrl);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
@@ -377,6 +405,9 @@ async function formatPublicationImage(dataUrl, aspectId) {
   canvas.height = Math.max(1, Math.round(format.height || cropHeight));
   const context = canvas.getContext("2d");
   if (!context) throw new Error("No se pudo recortar la imagen");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingQuality = "high";
   context.drawImage(
     image,
     Math.max(0, (width - cropWidth) / 2),
@@ -4958,12 +4989,14 @@ function Generator({ embedded = false, onBack, onUseText, targetFormat = "", tar
     }
     try {
       setError("");
-      const dataUrl = await readBrowserFile(file);
+      const read = await readBrowserFile(file);
+      // Para que la IA vea la foto basta con 1600 px; entera se pasaba de 2 MB y Flow la cortaba (413).
+      const dataUrl = form.materialTipo === "PDF" ? read : await shrinkImageDataUrl(read, GENERATOR_MAX_SIDE, 0.85);
       setMaterialFile(file);
       setMaterialFilePayload({
         name: file.name,
-        type: file.type || (form.materialTipo === "PDF" ? "application/pdf" : "image/*"),
-        size: file.size,
+        type: dataUrl.match(/^data:([^;,]+)/)?.[1] || file.type || (form.materialTipo === "PDF" ? "application/pdf" : "image/*"),
+        size: Math.round((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75),
         dataUrl,
       });
       const size = `${(file.size / 1024 / 1024).toFixed(file.size > 1024 * 1024 ? 1 : 3)} MB`;
@@ -5603,9 +5636,10 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
       if (!allowedTypes.includes(file.type)) {
         throw new Error(videoTarget ? "Sube un vídeo MP4, WebM o MOV" : "Sube una imagen JPG, PNG o WebP");
       }
-      const maxSize = videoTarget ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
+      // Las imágenes se reducen antes de subir (formatPublicationImage), así que una foto grande del móvil vale.
+      const maxSize = videoTarget ? 100 * 1024 * 1024 : 40 * 1024 * 1024;
       if (file.size > maxSize) {
-        throw new Error(videoTarget ? "El vídeo debe pesar menos de 100 MB" : "La imagen debe pesar menos de 8 MB");
+        throw new Error(videoTarget ? "El vídeo debe pesar menos de 100 MB" : "La imagen debe pesar menos de 40 MB");
       }
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
