@@ -5009,6 +5009,9 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
 
   useEffect(() => {
     if (draftCaption?.source !== "publication") return;
+    setMasterId(draftCaption.masterId || "");
+    setMasterTitle("");
+    setEditorialFormat(draftCaption.editorialFormat || "post");
     setCaption(String(draftCaption.caption || draftCaption.text || ""));
     setCaptionHtml(String(draftCaption.captionHtml || ""));
     const nextMediaUrl = draftCaption.imageUrl || draftCaption.videoUrl || "";
@@ -5069,8 +5072,6 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           action: "publish",
           targetId: selectedTarget.id,
           target: selectedTarget,
-          masterId,
-          editorialFormat,
           caption,
           imageUrl: mediaUrl,
           videoUrl: ["youtube", "tiktok"].includes(selectedTarget.id) ? mediaUrl : "",
@@ -5321,6 +5322,8 @@ function InstagramPublisher({ draftCaption, onCaptionConsumed, onPublicationSave
           action,
           targetId: selectedTarget.id,
           target: selectedTarget,
+          masterId,
+          editorialFormat,
           caption,
           captionHtml,
           imageUrl: mediaUrl,
