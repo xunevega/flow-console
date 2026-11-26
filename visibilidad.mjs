@@ -79,9 +79,19 @@ export const FICHAS_INICIALES = [
 
 // Reglas de cada red: Roberto no vuelve a pensar en formatos; si una regla cambia, se cambia aquí.
 export const REGLAS_CANAL = {
+  blog: { nombre: "Blog Æternal Flow", reglas: "Original completo", completo: true },
+  linkedin_article: { nombre: "LinkedIn · artículo", reglas: "Original completo", completo: true },
+  linkedin_newsletter: { nombre: "LinkedIn Newsletter", reglas: "Original completo", completo: true },
+  substack: { nombre: "Substack", reglas: "Original completo", completo: true },
+  substack_notes: { nombre: "Substack Notes", reglas: "Reflexión breve autónoma, sin clickbait ni enlaces inventados." },
+  medium: { nombre: "Medium", reglas: "Original completo", completo: true },
+  reddit: { nombre: "Reddit", reglas: "Abre un debate genuino, sin publicidad ni pedir votos. Título y texto." },
+  youtube_long: { nombre: "YouTube", reglas: "Guion narrado para vídeo horizontal con escenas, título y descripción." },
+  tiktok: { nombre: "TikTok", reglas: "Guion breve vertical, título y descripción." },
+  reels: { nombre: "Instagram Reels", reglas: "Guion breve vertical y pie de vídeo." },
   linkedin: {
     nombre: "LinkedIn",
-    reglas: "Texto de 700 a 1.200 caracteres. Primera línea que enganche sin clickbait. Párrafos de una o dos frases. Cuenta el problema y lo aprendido, en primera persona. Enlace al artículo al final. Máximo 3 hashtags. Sin emojis de adorno.",
+    reglas: "Texto de 700 a 1.200 caracteres. Primera línea que enganche sin clickbait. Párrafos de una o dos frases. Cuenta el problema y lo aprendido, en primera persona. Añade el enlace únicamente si se proporciona. Máximo 3 hashtags. Sin emojis de adorno.",
   },
   pinterest: {
     nombre: "Pinterest",
@@ -89,11 +99,11 @@ export const REGLAS_CANAL = {
   },
   instagram: {
     nombre: "Instagram",
-    reglas: "Pie de foto de 600 a 1.000 caracteres. Primera línea que se entienda sola. Termina con «Enlace en la bio». Entre 3 y 6 hashtags concretos al final. Propón en una línea aparte qué imagen o carrusel acompaña.",
+    reglas: "Pie de foto de 600 a 1.000 caracteres. Primera línea que se entienda sola. No prometas un enlace en la bio si no existe. Entre 3 y 6 hashtags concretos al final. Propón en una línea aparte qué imagen o carrusel acompaña.",
   },
   youtube: {
     nombre: "YouTube Shorts",
-    reglas: "Guion de 35 a 45 segundos: gancho en los 3 primeros segundos, el problema, la solución en pantalla y cierre. Indica entre corchetes qué se ve en cada momento. Añade título (máx. 70 caracteres) y descripción corta con el enlace.",
+    reglas: "Guion de 35 a 45 segundos: gancho en los 3 primeros segundos, el problema, la solución en pantalla y cierre. Indica entre corchetes qué se ve en cada momento. Añade título (máx. 70 caracteres) y descripción corta; incluye enlace solo si está disponible.",
   },
 };
 
@@ -288,7 +298,7 @@ export async function escribirBorrador({ titulo, busqueda = "", producto = "", p
           ficha
             ? "El artículo resuelve de verdad la búsqueda aunque el lector no compre nada. El producto aparece al final, en una sección corta, contando lo que hace y lo que NO hace."
             : "Es un tema libre: no menciones ni vendas ningún producto ni proyecto de Æternal Flow salvo que el tema trate de eso. Que se sostenga solo: una idea clara, ejemplos concretos y una conclusión con opinión propia.",
-          "REGLA DURA: del producto solo puedes afirmar lo que está en «hechos». Si algo no está ahí, no lo digas. No inventes cifras, clientes, premios ni fechas.",
+          "Solo para afirmaciones sobre un producto propio, usa los hechos de su ficha. Los ensayos y otros temas no están limitados a las fichas. No inventes cifras, citas, clientes, premios ni fechas.",
           "Sobre leyes, impuestos o normas: solo lo general y seguro; si dependes de un detalle, di que hay que comprobarlo con la fuente oficial.",
           "Formato: Markdown. Sin título # (va aparte). Secciones con ##. Entre 600 y 1.000 palabras.",
           "Responde solo JSON: {\"titulo\": \"...\", \"descripcion\": \"150-160 caracteres para Google\", \"cuerpo\": \"markdown\"}.",
@@ -370,13 +380,17 @@ export async function avisarBuscadores(urls) {
   return { estado: r.ok ? "ok" : "error", codigo: r.status };
 }
 
-async function versionesPorRed(borrador, url) {
+async function versionesPorRed(borrador, url, canales = Object.keys(REGLAS_CANAL)) {
+  const elegidos = canales.filter(k => Object.hasOwn(REGLAS_CANAL,k));
+  const completos = Object.fromEntries(elegidos.filter(k => REGLAS_CANAL[k].completo).map(k => [k, "# " + borrador.titulo + "\n\n" + borrador.cuerpo]));
+  const adaptados = elegidos.filter(k => !REGLAS_CANAL[k].completo);
+  if (!adaptados.length) return completos;
   const voz = await instruccionVoz({ maxEjemplos: 3 });
   const respuesta = await d.openaiChat({
     model: d.openaiTextModel,
     json: true,
     temperature: 0.5,
-    maxTokens: 2500,
+    maxTokens: 6500,
     messages: [
       {
         role: "system",
@@ -385,16 +399,14 @@ async function versionesPorRed(borrador, url) {
       {
         role: "user",
         content: JSON.stringify({
-          articulo: { titulo: borrador.titulo, descripcion: borrador.descripcion, cuerpo: borrador.cuerpo.slice(0, 9000), enlace: url },
-          redes: Object.fromEntries(Object.entries(REGLAS_CANAL).map(([k, v]) => [k, v.reglas])),
+          articulo: { titulo: borrador.titulo, descripcion: borrador.descripcion, cuerpo: borrador.cuerpo, enlace: url || null },
+          redes: Object.fromEntries(adaptados.map(k => [k, REGLAS_CANAL[k].reglas])),
         }),
       },
     ],
   });
   const r = jsonDelModelo(respuesta.text);
-  return Object.fromEntries(Object.keys(REGLAS_CANAL)
-    .filter((k) => r[k])
-    .map((k) => [k, texto(typeof r[k] === "string" ? r[k] : JSON.stringify(r[k], null, 2), 3000)]));
+  return { ...completos, ...Object.fromEntries(adaptados.filter(k => typeof r[k] === "string" && r[k].trim()).map(k => [k, r[k].trim()])) };
 }
 
 // Las portadas se guardan en la biblioteca pública de Flow.
@@ -421,7 +433,7 @@ export async function publicarBorrador(id, origen = "") {
   }
   borrador.aviso = await avisarBuscadores([blog.url, `${SITIO}blog.php`]).catch((e) => ({ estado: "error", detalle: e.message }));
   try {
-    borrador.versiones = await versionesPorRed(borrador, blog.url);
+    if (!Object.keys(borrador.versiones || {}).length) borrador.versiones = await versionesPorRed(borrador, blog.url);
   } catch (error) {
     borrador.versiones = {};
     borrador.errorVersiones = error.message;
@@ -499,6 +511,33 @@ export function montarVisibilidad(app, dependencias) {
     return { ok: true };
   }));
 
+  app.post("/api/visibilidad/borradores/:id/versiones", requireAuth, responder(async req => {
+    const datos = await leer();
+    const b = datos.borradores.find(x => x.id === req.params.id);
+    if (!b || !b.cuerpo.trim()) throw new Error("Artículo inexistente o vacío.");
+    const canales = [...new Set(Array.isArray(req.body?.canales) ? req.body.canales : [])].filter(k => Object.hasOwn(REGLAS_CANAL,k));
+    if (!canales.length) throw new Error("Selecciona algún destino.");
+    const versiones = await versionesPorRed(b,b.url || "",canales);
+    const actual = await leer();
+    const destino = actual.borradores.find(x => x.id === b.id);
+    if (!destino || destino.cuerpo !== b.cuerpo || destino.titulo !== b.titulo) throw new Error("El artículo cambió durante la preparación.");
+    destino.versiones = { ...destino.versiones, ...versiones };
+    destino.originalAprobado = { titulo:b.titulo, cuerpo:b.cuerpo, fecha:new Date().toISOString() };
+    destino.errorVersiones = canales.filter(k => !versiones[k]).map(k => REGLAS_CANAL[k].nombre).join(", ");
+    await guardar(actual);
+    return destino;
+  }));
+  app.patch("/api/visibilidad/borradores/:id/versiones/:canal", requireAuth, responder(async req => {
+    const datos = await leer();
+    const b = datos.borradores.find(x => x.id === req.params.id);
+    const canal = req.params.canal;
+    if (!b || !Object.hasOwn(REGLAS_CANAL,canal)) throw new Error("Versión no encontrada.");
+    const valor = String(req.body?.texto || "").trim();
+    if (!valor || valor.length > 100000) throw new Error("Texto inválido.");
+    b.versiones = {...b.versiones,[canal]:valor};
+    await guardar(datos);
+    return b;
+  }));
   app.post("/api/visibilidad/borradores/:id/publicar", requireAuth, responder((req) => publicarBorrador(req.params.id, d.publicOrigin ? d.publicOrigin(req) : "")));
 
   app.put("/api/visibilidad/fichas", requireAuth, responder(async (req) => {
