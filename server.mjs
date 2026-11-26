@@ -32,6 +32,8 @@ const publicationLibraryDirectory = path.join(dataDirectory, "publication-librar
 const publicationTargetsFile = path.join(dataDirectory, "publication-targets.json");
 const forumConfigFile = path.join(dataDirectory, "forum-config.json");
 const monthlyStatsFile = path.join(dataDirectory, "monthly-stats.json");
+const editorialMastersFile = path.join(dataDirectory, "editorial-masters.json");
+const editorialMetricsFile = path.join(dataDirectory, "editorial-metrics.json");
 const campaignUrlsFile = path.join(dataDirectory, "campaign-urls.json");
 const visualAnalysisCacheFile = path.join(dataDirectory, "visual-analysis-cache.json");
 const production = process.env.NODE_ENV === "production";
@@ -5802,12 +5804,73 @@ async function handlePublicationPosts(_, res) {
   try {
     const posts = await readPublicationPosts();
     await syncPublishedCalendarTasks(posts);
-    res.json({ posts: posts.slice(0, 50) });
+    res.json({ posts });
   } catch (error) {
     res.status(500).json({ error: `No se pudieron leer las publicaciones: ${error.message}` });
   }
 }
 
+async function readEditorialRecords(file) {
+  try {
+    const data = JSON.parse(await fs.readFile(file, "utf8"));
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+let editorialWriteQueue = Promise.resolve();
+function mutateEditorialRecords(file, change) {
+  const work = editorialWriteQueue.then(async () => {
+    const records = await readEditorialRecords(file);
+    const result = change(records);
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const tmp = file + "." + crypto.randomUUID() + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(records, null, 2), { mode: 0o600 });
+    await fs.rename(tmp, file);
+    return result;
+  });
+  editorialWriteQueue = work.catch(() => {});
+  return work;
+}
+app.get("/api/editorial/masters", requireAuth, async (_, res) => {
+  try { res.json({ masters: await readEditorialRecords(editorialMastersFile) }); }
+  catch { res.status(500).json({ error: "No se pudieron leer los artículos maestros" }); }
+});
+app.post("/api/editorial/masters", requireAuth, async (req, res) => {
+  const title = String(req.body?.title || "").trim().slice(0, 250);
+  const caption = String(req.body?.caption || "").trim();
+  if (!title || !caption || caption.length > 200000) return res.status(400).json({ error: "Indica título y texto válido" });
+  const master = { id: crypto.randomUUID(), title, caption, captionHtml: cleanPublicationHtml(req.body?.captionHtml), imageUrl: safeUrl(req.body?.imageUrl), approvedAt: new Date().toISOString() };
+  try {
+    await mutateEditorialRecords(editorialMastersFile, records => records.unshift(master));
+    res.status(201).json({ master });
+  } catch { res.status(500).json({ error: "No se pudo guardar el artículo maestro" }); }
+});
+app.get("/api/editorial/metrics", requireAuth, async (_, res) => {
+  try { res.json({ entries: await readEditorialRecords(editorialMetricsFile) }); }
+  catch { res.status(500).json({ error: "No se pudieron leer las métricas editoriales" }); }
+});
+app.put("/api/editorial/metrics", requireAuth, async (req, res) => {
+  const period = String(req.body?.period || "");
+  const channel = String(req.body?.channel || "").trim().slice(0, 80);
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(period) || !channel) return res.status(400).json({ error: "Periodo o canal inválido" });
+  const entry = { period, channel, updatedAt: new Date().toISOString() };
+  for (const key of ["freeSubscribers", "paidSubscribers", "revenue", "leads"]) {
+    const raw = req.body?.[key];
+    const value = raw === "" || raw == null ? null : Number(raw);
+    if (value !== null && (!Number.isFinite(value) || value < 0 || (key !== "revenue" && !Number.isInteger(value)))) return res.status(400).json({ error: "Métrica inválida" });
+    entry[key] = value;
+  }
+  try {
+    const entries = await mutateEditorialRecords(editorialMetricsFile, records => {
+      const index = records.findIndex(row => row.period === period && row.channel === channel);
+      if (index >= 0) records[index] = entry; else records.push(entry);
+      return records;
+    });
+    res.json({ entries });
+  } catch { res.status(500).json({ error: "No se pudieron guardar las métricas" }); }
+});
 app.get("/api/publications/posts", requireAuth, handlePublicationPosts);
 app.get("/api/instagram/posts", requireAuth, handlePublicationPosts);
 
@@ -6311,6 +6374,13 @@ async function handlePublicationSubmit(req, res) {
     const requestedTargetId = String(req.body?.targetId || req.body?.target?.id || "instagram");
     const target = targets.find((item) => item.id === requestedTargetId) || targets.find((item) => item.id === "instagram");
     payload = cleanPublicationPayload({ ...req.body, target });
+    const masterId = String(req.body?.masterId || "");
+    if (masterId) {
+      const masters = await readEditorialRecords(editorialMastersFile);
+      if (!masters.some(master => master.id === masterId)) return res.status(400).json({ error: "Artículo maestro inexistente" });
+      payload.masterId = masterId;
+    }
+    payload.editorialFormat = ["post", "article", "newsletter"].includes(req.body?.editorialFormat) ? req.body.editorialFormat : "post";
     if (!payload.caption) {
       return res.status(400).json({ error: "El caption es obligatorio" });
     }
