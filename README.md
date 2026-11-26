@@ -114,8 +114,16 @@ Consola privada de ejecucion. Flow no es el cerebro editorial: ejecuta, publica,
   (`/api/publications/posts-robot/linkedin`), los escribe en «Escribir articulo» con el
   Chrome y la sesion de Roberto (titulo = primera linea, portada = la imagen) y avisa
   del resultado. `robot-redes/instalar-publicador.command` deja el Mac mirando la cola
-  cada 10 minutos; `publicar-linkedin.command` lo lanza a mano. Si falla, el articulo
-  vuelve a "a mano" con el motivo, y un intento cortado no se repite solo.
+  cada 10 minutos; `publicar-linkedin.command` lo lanza a mano. El robot busca el editor
+  tambien dentro de shadow DOM e iframes (LinkedIn pinta asi parte de su interfaz) y
+  sube la portada interceptando el selector de archivos. La portada sale a 1920 x 1080:
+  apaisada se recorta al centro; cuadrada o vertical se encaja entera sobre fondo papel.
+  Si falla antes de pulsar «Publicar» (no ha salido nada) vuelve a la cola sola hasta
+  3 veces; si falla despues, o se corto a medias, vuelve a "a mano" con el motivo.
+  Cada fallo deja `robot-redes/descargas/fallo-<id>.png` y `.json` (paso, botones y
+  campos que veia) y Flow guarda ese resumen en `robotDiagnostico`.
+- Las fotos se reducen en el navegador antes de subir: a 2048 px de lado en «Original»
+  (los recortes 1:1, 4:5 y 16:9 ya salen a su tamano) y a 1600 px para el generador.
 - Publica en Pinterest si la API esta configurada.
 - Publica en YouTube si OAuth esta configurado.
 - Prepara TikTok de forma asistida.

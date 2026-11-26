@@ -16,7 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +95,32 @@ function conectar(url) {
   return { listo, enviar, esperarEvento, cerrar: () => ws.close() };
 }
 
+// LinkedIn pinta parte de su interfaz dentro de shadow DOM («interop-outlet») y de iframes, y
+// su barra de arriba y sus diálogos son position:fixed (offsetParent === null aunque se vean).
+// Todo lo que busca el robot pasa por aquí: recorre documento, shadow roots e iframes del mismo origen.
+const PROFUNDO = `
+const __todos = (sel) => {
+  const out = [];
+  const visitar = (raiz) => {
+    try { out.push(...raiz.querySelectorAll(sel)); } catch {}
+    for (const e of raiz.querySelectorAll("*")) {
+      if (e.shadowRoot) visitar(e.shadowRoot);
+      if (e.tagName === "IFRAME") { try { if (e.contentDocument) visitar(e.contentDocument); } catch {} }
+    }
+  };
+  visitar(document);
+  return out;
+};
+const __visible = (e) => {
+  if (!e || !e.isConnected) return false;
+  const r = e.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return false;
+  const st = (e.ownerDocument.defaultView || window).getComputedStyle(e);
+  return st.visibility !== "hidden" && st.display !== "none" && st.opacity !== "0";
+};
+const __texto = (e) => (e.innerText || e.textContent || e.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
+`;
+
 function pagina(cdp) {
   const evaluar = async (expr) => {
     const r = await cdp.enviar("Runtime.evaluate", { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true });
@@ -110,13 +136,14 @@ function pagina(cdp) {
       await pausa(1500);
     },
     url: () => evaluar("return location.href"),
-    hay: (selector) => evaluar(`return !!document.querySelector(${JSON.stringify(selector)})`),
-    // Pulsa el primer botón o enlace visible cuyo texto encaje.
-    pulsarTexto: (patron) => evaluar(`
+    hay: (selector) => evaluar(`${PROFUNDO} return __todos(${JSON.stringify(selector)}).length > 0`),
+    // Pulsa el primer botón o enlace visible (y activo) cuyo texto encaje.
+    pulsarTexto: (patron) => evaluar(`${PROFUNDO}
       const re = new RegExp(${JSON.stringify(patron)}, "i");
-      const el = [...document.querySelectorAll("button, a, [role=button], [role=link]")]
-        .find((e) => re.test((e.innerText || e.getAttribute("aria-label") || "").trim()) && e.offsetParent !== null);
+      const el = __todos("button, a, [role=button], [role=link]")
+        .find((e) => re.test(__texto(e)) && __visible(e) && !e.disabled && e.getAttribute("aria-disabled") !== "true");
       if (!el) return false;
+      el.scrollIntoView({ block: "center" });
       el.click();
       return true;`),
     async captura(selector = "") {
@@ -398,14 +425,17 @@ const avisarFlow = (id, estado, extra = {}) => flowRobot(`/${encodeURIComponent(
   body: JSON.stringify({ estado, ...extra }),
 });
 
-// Busca un campo del editor por su placeholder o etiqueta y devuelve su posición (o null).
+// El campo marcado (título o cuerpo), esté donde esté (shadow DOM o iframe).
+const MARCADO = (tipo) => `__todos("[data-flow-robot=${tipo}]")[0]`;
+
+// Busca un campo del editor por su placeholder o etiqueta, lo marca y le da el foco (o null).
 async function marcarCampo(p, tipo) {
-  return p.evaluar(`
-    const visible = (e) => e && e.offsetParent !== null && e.getBoundingClientRect().height > 10;
+  return p.evaluar(`${PROFUNDO}
     const etiqueta = (e) => [e.getAttribute("placeholder"), e.getAttribute("aria-label"), e.getAttribute("data-placeholder"), e.id, e.className]
-      .filter(Boolean).join(" ");
-    document.querySelectorAll("[data-flow-robot]").forEach((e) => e.removeAttribute("data-flow-robot"));
-    const campos = [...document.querySelectorAll("textarea, input[type=text], [contenteditable=true], [contenteditable=''], [role=textbox]")].filter(visible);
+      .filter((x) => typeof x === "string" && x).join(" ");
+    __todos("[data-flow-robot]").forEach((e) => e.removeAttribute("data-flow-robot"));
+    const campos = __todos("textarea, input[type=text], input:not([type]), [contenteditable=true], [contenteditable=''], [contenteditable=plaintext-only], [role=textbox]")
+      .filter((e) => __visible(e) && e.getBoundingClientRect().height > 10 && !e.closest("header, nav, [role=search], [role=banner]"));
     let el;
     if (${JSON.stringify(tipo)} === "titulo") {
       el = campos.find((e) => /t[ií]tulo|title|headline/i.test(etiqueta(e)));
@@ -429,22 +459,31 @@ async function escribirTitulo(p, cdp, titulo) {
   }
   await cdp.enviar("Input.insertText", { text: titulo });
   await pausa(600, 1000);
+  const puesto = await p.evaluar(`${PROFUNDO} const e = ${MARCADO("titulo")}; return e ? (e.value ?? e.innerText ?? "").trim().length : 0;`).catch(() => 0);
+  if (puesto < Math.min(titulo.length, 20) * 0.6) throw new Error("el título no entró en su campo");
 }
 
 // Pega el cuerpo como lo pegarías tú (con formato si hay HTML) y comprueba que ha entrado.
 async function escribirCuerpo(p, cdp, cuerpo, html) {
-  if (!(await marcarCampo(p, "cuerpo"))) throw new Error("no encuentro el cuerpo del artículo en el editor");
-  const largo = () => p.evaluar(`return (document.querySelector("[data-flow-robot=cuerpo]")?.innerText || "").trim().length`);
+  let marcado = false;
+  for (let i = 0; i < 10 && !marcado; i += 1) {
+    marcado = await marcarCampo(p, "cuerpo");
+    if (!marcado) await pausa(1000);
+  }
+  if (!marcado) throw new Error("no encuentro el cuerpo del artículo en el editor");
+  const largo = () => p.evaluar(`${PROFUNDO} return (${MARCADO("cuerpo")}?.innerText || "").trim().length`);
   const objetivo = Math.min(cuerpo.length, 200) * 0.6;
   const intentos = [
-    `const dt = new DataTransfer();
+    `${PROFUNDO}
+     const el = ${MARCADO("cuerpo")};
+     const Vista = el.ownerDocument.defaultView || window;
+     const dt = new Vista.DataTransfer();
      dt.setData("text/plain", ${JSON.stringify(cuerpo)});
      ${html ? `dt.setData("text/html", ${JSON.stringify(html)});` : ""}
-     const el = document.querySelector("[data-flow-robot=cuerpo]");
      el.focus();
-     el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+     el.dispatchEvent(new Vista.ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
      return true;`,
-    html ? `document.querySelector("[data-flow-robot=cuerpo]").focus(); return document.execCommand("insertHTML", false, ${JSON.stringify(html)});` : "",
+    html ? `${PROFUNDO} const el = ${MARCADO("cuerpo")}; el.focus(); return el.ownerDocument.execCommand("insertHTML", false, ${JSON.stringify(html)});` : "",
   ].filter(Boolean);
   for (const js of intentos) {
     await p.evaluar(js).catch(() => {});
@@ -465,54 +504,149 @@ async function escribirCuerpo(p, cdp, cuerpo, html) {
   if ((await largo()) < objetivo) throw new Error("el texto no entró en el editor");
 }
 
-// Portada: la baja a descargas/ y la mete en el selector de archivos del editor.
+// Portada de artículo de LinkedIn: 1920 × 1080 (16:9), que es lo que pide LinkedIn y lo que enseña
+// sin recortar. Si la foto ya es apaisada se recorta al centro; si es vertical o cuadrada se encaja
+// entera sobre fondo papel, para que no se pierda media foto. Con sips, que viene en macOS.
+const PORTADA_ANCHO = 1920;
+const PORTADA_ALTO = 1080;
+const PORTADA_FONDO = "F1EDE3";
+
+function planPortada(ancho, alto) {
+  if (!ancho || !alto) return null;
+  // Apaisada (3:2 o más ancha): escalar hasta cubrir 1920×1080 y quedarse con el centro.
+  if (ancho / alto >= 1.5) {
+    const escala = Math.max(PORTADA_ANCHO / ancho, PORTADA_ALTO / alto);
+    return { modo: "recortar", ancho: Math.round(ancho * escala), alto: Math.round(alto * escala) };
+  }
+  // Cuadrada o vertical: cabe entera dentro de 1920×1080 y el resto es fondo.
+  const escala = Math.min(PORTADA_ANCHO / ancho, PORTADA_ALTO / alto);
+  return { modo: "encajar", ancho: Math.round(ancho * escala), alto: Math.round(alto * escala) };
+}
+
+function prepararPortada(archivo) {
+  const sips = (args) => execFileSync("sips", args, { stdio: ["ignore", "pipe", "pipe"], timeout: 60000 }).toString();
+  try {
+    const info = sips(["-g", "pixelWidth", "-g", "pixelHeight", archivo]);
+    const ancho = Number(info.match(/pixelWidth:\s*(\d+)/)?.[1]);
+    const alto = Number(info.match(/pixelHeight:\s*(\d+)/)?.[1]);
+    const plan = planPortada(ancho, alto);
+    if (!plan) return archivo;
+    const salida = archivo.replace(/\.[a-z]+$/i, "") + "-1920x1080.jpg";
+    sips(["-s", "format", "jpeg", "-s", "formatOptions", "90", "--resampleHeightWidth", String(plan.alto), String(plan.ancho), archivo, "--out", salida]);
+    if (plan.modo === "recortar") sips(["-c", String(PORTADA_ALTO), String(PORTADA_ANCHO), salida]);
+    else sips(["-p", String(PORTADA_ALTO), String(PORTADA_ANCHO), "--padColor", PORTADA_FONDO, salida]);
+    log(`  portada: ${ancho}×${alto} → ${PORTADA_ANCHO}×${PORTADA_ALTO} (${plan.modo})`);
+    return salida;
+  } catch (e) {
+    log(`  portada: no pude ajustarla (${e.message.split("\n")[0]}); va tal cual`);
+    return archivo;
+  }
+}
+
+// Mete el archivo en el selector de archivos del editor. LinkedIn abre el selector al pulsar el
+// botón: se intercepta (si no, saldría la ventana del Finder y el robot se quedaría esperando).
+async function subirArchivo(p, cdp, archivo, patronBoton) {
+  await cdp.enviar("Page.setInterceptFileChooserDialog", { enabled: true }).catch(() => {});
+  try {
+    const elegido = cdp.esperarEvento("Page.fileChooserOpened", () => true, 10000).catch(() => null);
+    const pulsado = await p.pulsarTexto(patronBoton);
+    if (pulsado) {
+      const ev = await elegido;
+      if (ev?.backendNodeId) {
+        await cdp.enviar("DOM.setFileInputFiles", { backendNodeId: ev.backendNodeId, files: [archivo] });
+        return true;
+      }
+    }
+    // Sin diálogo: buscar el input de archivo, también dentro de shadow DOM o iframes.
+    const r = await cdp.enviar("Runtime.evaluate", {
+      expression: `(() => { ${PROFUNDO} const ins = __todos("input[type=file]"); return ins.find((e) => /image|jpe?g|png/i.test(e.accept || "")) || ins[0] || null; })()`,
+      returnByValue: false,
+    });
+    if (!r.result?.objectId) return false;
+    await cdp.enviar("DOM.setFileInputFiles", { objectId: r.result.objectId, files: [archivo] });
+    return true;
+  } finally {
+    await cdp.enviar("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+  }
+}
+
+// Portada: la baja a descargas/, la ajusta a 1920×1080 y la mete en el editor.
 async function ponerPortada(p, cdp, url, id) {
   const r = await fetch(url, { signal: AbortSignal.timeout(60000) });
   if (!r.ok) throw new Error(`no se pudo bajar la imagen (${r.status})`);
   const tipo = String(r.headers.get("content-type") || "");
-  const ext = /png/.test(tipo) ? "png" : /gif/.test(tipo) ? "gif" : "jpg";
+  const ext = /png/.test(tipo) ? "png" : /gif/.test(tipo) ? "gif" : /webp/.test(tipo) ? "webp" : "jpg";
   const carpeta = path.join(DIR, "descargas");
   fs.mkdirSync(carpeta, { recursive: true });
-  const archivo = path.join(carpeta, `portada-${id}.${ext}`);
-  fs.writeFileSync(archivo, Buffer.from(await r.arrayBuffer()));
-  let hay = await p.hay("input[type=file]");
-  if (!hay) {
-    await p.pulsarTexto("subir desde (el )?ordenador|upload from computer|a[ñn]adir (una )?(imagen|portada)|add (a )?cover|cover image|imagen de portada");
-    await pausa(1500, 2500);
-    hay = await p.hay("input[type=file]");
-  }
-  if (!hay) throw new Error("no encuentro dónde subir la portada");
-  const { root } = await cdp.enviar("DOM.getDocument", { depth: -1, pierce: true });
-  const { nodeId } = await cdp.enviar("DOM.querySelector", { nodeId: root.nodeId, selector: "input[type=file]" });
-  await cdp.enviar("DOM.setFileInputFiles", { nodeId, files: [archivo] });
+  const original = path.join(carpeta, `portada-${id}.${ext}`);
+  fs.writeFileSync(original, Buffer.from(await r.arrayBuffer()));
+  const archivo = prepararPortada(original);
+  const subida = await subirArchivo(p, cdp, archivo,
+    "subir desde (el )?ordenador|upload from computer|a[ñn]adir (una )?(imagen|portada|foto)|add (a )?(cover|image|photo)|cover image|imagen de portada|subir (una )?(imagen|foto)|upload (an )?image");
+  if (!subida) throw new Error("no encuentro dónde subir la portada");
   await pausa(4000, 6000);
-  // Algunos editores abren un diálogo para recortar: se acepta.
-  await p.pulsarTexto("^(siguiente|next|listo|hecho|done|aplicar|apply|guardar|save)$").catch(() => {});
-  await pausa(2000, 3000);
+  // LinkedIn abre su editor de imagen (recorte, texto alternativo): se acepta tal cual, hasta dos pasos.
+  for (let i = 0; i < 2; i += 1) {
+    const ok = await p.evaluar(`${PROFUNDO}
+      const d = __todos("[role=dialog], [aria-modal=true]").filter(__visible).pop();
+      if (!d) return false;
+      const b = __todos("button").filter((e) => d.contains(e) && __visible(e) && !e.disabled)
+        .find((e) => /^(siguiente|next|listo|hecho|done|aplicar|apply|guardar|save)$/i.test(__texto(e)));
+      if (!b) return false;
+      b.click();
+      return true;`).catch(() => false);
+    if (!ok) break;
+    await pausa(2000, 3000);
+  }
 }
 
 async function urlDelArticulo(p) {
-  return p.evaluar(`
+  return p.evaluar(`${PROFUNDO}
     if (location.href.includes("/pulse/")) return location.href.split("?")[0];
-    const a = [...document.querySelectorAll("a[href*='/pulse/']")].find((e) => e.offsetParent !== null);
+    const a = __todos("a[href*='/pulse/']").find(__visible);
     return a ? a.href.split("?")[0] : "";`).catch(() => "");
 }
 
-async function publicarUno(p, cdp, a) {
+// Lo que se ve en la página cuando algo falla, para saber qué cambió en LinkedIn sin adivinar.
+async function guardarDiagnostico(p, id, paso, error) {
+  const carpeta = path.join(DIR, "descargas");
+  fs.mkdirSync(carpeta, { recursive: true });
+  const foto = await p.captura().catch(() => "");
+  if (foto) fs.writeFileSync(path.join(carpeta, `fallo-${id}.png`), Buffer.from(foto, "base64"));
+  const vista = await p.evaluar(`${PROFUNDO}
+    const botones = __todos("button, [role=button]").filter(__visible).map(__texto).filter(Boolean).slice(0, 40);
+    const campos = __todos("textarea, input, [contenteditable=true], [contenteditable=''], [role=textbox]").filter(__visible)
+      .map((e) => [e.tagName.toLowerCase(), e.getAttribute("placeholder") || e.getAttribute("aria-label") || e.getAttribute("data-placeholder") || ""].join(" ")).slice(0, 20);
+    const sombras = __todos("*").filter((e) => e.shadowRoot).length;
+    const marcos = __todos("iframe").length;
+    return { url: location.href, botones, campos, sombras, marcos };`).catch(() => null);
+  fs.writeFileSync(path.join(carpeta, `fallo-${id}.json`), JSON.stringify({ paso, error, ...vista }, null, 2));
+  log(`  diagnóstico en descargas/fallo-${id}.png y .json`);
+  return vista;
+}
+
+async function publicarUno(p, cdp, a, estado) {
   await avisarFlow(a.id, "publicando");
+  estado.paso = "abrir el editor";
   await p.ir(`${LINKEDIN}/article/new/`);
   const dentro = async () => !/\/(login|checkpoint|authwall|uas\/login|signup)/.test(await p.url())
     && !(await p.hay("input#username, input[name='session_key']"));
   if (!(await dentro())) {
+    estado.paso = "iniciar sesión";
     if (!(await esperarSesion(p, "LinkedIn", dentro))) throw new Error("no se inició sesión en LinkedIn a tiempo");
     await p.ir(`${LINKEDIN}/article/new/`);
   }
   await pausa(4000, 6000);
+  // A veces LinkedIn pregunta antes como quién escribes (tú o una página): seguir como persona.
+  await p.pulsarTexto("^(siguiente|next|continuar|continue|empezar a escribir|start writing)$").catch(() => {});
   await franja(p, `Flow · Escribiendo el artículo «${a.titulo.slice(0, 60)}»… no toques esta ventana.`);
+  estado.paso = "título";
   await escribirTitulo(p, cdp, a.titulo);
+  estado.paso = "cuerpo";
   await escribirCuerpo(p, cdp, a.cuerpo, a.html);
   let sinPortada = "";
   if (a.imagen) {
+    estado.paso = "portada";
     try {
       await ponerPortada(p, cdp, a.imagen, a.id);
     } catch (e) {
@@ -523,14 +657,21 @@ async function publicarUno(p, cdp, a) {
   await pausa(3000, 4000); // que LinkedIn guarde el borrador
   await quitarFranja(p);
   // «Siguiente» abre el diálogo de compartir; ahí está «Publicar».
-  if (!(await p.pulsarTexto("^(siguiente|next|publicar|publish)$"))) throw new Error("no encuentro el botón Siguiente/Publicar");
+  estado.paso = "botón Siguiente";
+  estado.pulsadoPublicar = true; // a partir de aquí puede haber salido: no se reintenta solo
+  if (!(await p.pulsarTexto("^(siguiente|next|publicar|publish)$"))) {
+    estado.pulsadoPublicar = false;
+    throw new Error("no encuentro el botón Siguiente/Publicar");
+  }
   await pausa(3000, 5000);
-  await p.evaluar(`
-    const d = [...document.querySelectorAll("[role=dialog]")].find((e) => e.offsetParent !== null);
-    const b = d && [...d.querySelectorAll("button")].find((e) => /^(publicar|publish)$/i.test((e.innerText || "").trim()) && !e.disabled);
+  estado.paso = "publicar";
+  await p.evaluar(`${PROFUNDO}
+    const d = __todos("[role=dialog], [aria-modal=true]").filter(__visible).pop();
+    const b = d && __todos("button").find((e) => d.contains(e) && /^(publicar|publish)$/i.test(__texto(e)) && !e.disabled && __visible(e));
     if (b) b.click();
     return !!b;`).catch(() => false);
   // Esperar a que LinkedIn confirme: la página del artículo, un enlace /pulse/ o un aviso de publicado.
+  estado.paso = "confirmación";
   for (let i = 0; i < 40; i += 1) {
     await pausa(1500);
     const url = await urlDelArticulo(p);
@@ -538,28 +679,34 @@ async function publicarUno(p, cdp, a) {
     const confirmado = await p.evaluar(`return /(art[ií]culo|article).{0,40}(publicad|published)|se ha publicado|has been published/i.test(document.body.innerText || "")`).catch(() => false);
     if (confirmado) return { url: "", sinPortada };
   }
-  const foto = await p.captura().catch(() => "");
-  if (foto) fs.writeFileSync(path.join(DIR, "descargas", `fallo-${a.id}.png`), Buffer.from(foto, "base64"));
   throw new Error("LinkedIn no confirmó la publicación (queda como borrador en tus artículos de LinkedIn)");
 }
 
 async function publicarArticulos(p, cdp, articulos) {
   let hechos = 0;
   for (const a of articulos) {
-    // Si un intento anterior se quedó a medias, puede que saliera: mejor que lo mire Roberto.
-    if (a.intentos >= 1) {
+    // Si un intento anterior se quedó a medias (el robot se cortó), puede que saliera: mejor que lo mire Roberto.
+    const cortado = a.cortado ?? a.intentos >= 1;
+    if (cortado) {
       await avisarFlow(a.id, "fallo", { error: "un intento anterior se cortó; mira en LinkedIn si salió antes de repetir" }).catch(() => {});
       continue;
     }
+    const estado = { paso: "", pulsadoPublicar: false };
     try {
       log(`LinkedIn: publicando «${a.titulo}»…`);
-      const { url, sinPortada } = await publicarUno(p, cdp, a);
-      await avisarFlow(a.id, "publicado", { url });
+      const { url, sinPortada } = await publicarUno(p, cdp, a, estado);
+      await avisarFlow(a.id, "publicado", { url, aviso: sinPortada ? `sin portada: ${sinPortada}` : "" });
       hechos += 1;
       log(`  publicado ${url || "(sin enlace)"}${sinPortada ? ` · sin portada: ${sinPortada}` : ""}`);
     } catch (e) {
-      log(`  no se pudo: ${e.message}`);
-      await avisarFlow(a.id, "fallo", { error: e.message }).catch(() => {});
+      log(`  no se pudo (${estado.paso}): ${e.message}`);
+      const vista = await guardarDiagnostico(p, a.id, estado.paso, e.message);
+      await avisarFlow(a.id, "fallo", {
+        error: `${estado.paso}: ${e.message}`,
+        // Si no llegó a pulsar Publicar, no ha salido nada: Flow lo vuelve a poner en cola.
+        reintentable: !estado.pulsadoPublicar,
+        diagnostico: vista ? { url: vista.url, botones: vista.botones, campos: vista.campos } : null,
+      }).catch(() => {});
     }
     await pausa(5000, 9000);
   }

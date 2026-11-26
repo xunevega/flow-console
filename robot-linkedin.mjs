@@ -12,6 +12,8 @@ export const ROBOT_QUEUED = "robot_queued";
 const ROBOT_WORKING = "robot_publishing";
 const ROBOT_DONE = "published_by_mac_robot";
 const REINTENTO_MS = 30 * 60 * 1000;
+// Fallos antes de pulsar «Publicar» (no ha salido nada): se vuelve a la cola sola hasta 3 veces.
+const MAX_REINTENTOS = 3;
 
 function robotAutorizado(req) {
   const esperado = String(process.env.ESTADISTICAS_ROBOT_TOKEN || "");
@@ -57,6 +59,13 @@ export function htmlSinTitulo(html, titulo) {
   return limpio;
 }
 
+// Lo que vio el robot cuando falló (dirección, botones y campos visibles), recortado.
+function diagnostico(valor) {
+  if (!valor || typeof valor !== "object") return null;
+  const lista = (x, n) => (Array.isArray(x) ? x : []).slice(0, n).map((t) => String(t).slice(0, 80));
+  return { url: String(valor.url || "").slice(0, 300), botones: lista(valor.botones, 40), campos: lista(valor.campos, 20), at: new Date().toISOString() };
+}
+
 export function montarRobotLinkedin(app, { readPublicationPosts, writePublicationPosts, alPublicar, publicOrigin }) {
   // El robot pregunta qué hay pendiente. También devuelve los que se quedaron a medias hace rato.
   app.get("/api/publications/posts-robot/linkedin", async (req, res) => {
@@ -81,6 +90,8 @@ export function montarRobotLinkedin(app, { readPublicationPosts, writePublicatio
             html: htmlSinTitulo(post.captionHtml, titulo),
             imagen,
             intentos: Number(post.robotIntentos || 0),
+            // Se quedó «publicando» hace más de media hora: el robot se cortó y pudo haber salido.
+            cortado: post.status === ROBOT_WORKING,
           };
         }),
       });
@@ -110,11 +121,21 @@ export function montarRobotLinkedin(app, { readPublicationPosts, writePublicatio
           publishedAt: now,
           finalUrl: url,
           publicUrl: url,
-          lastError: null,
+          lastError: req.body?.aviso ? `Publicado por el robot del Mac (${String(req.body.aviso).slice(0, 200)}).` : null,
           result: { ...(post.result || {}), ok: true, status: ROBOT_DONE, deliveryMode: "robot_mac", url, publicUrl: url },
+        });
+      } else if (estado === "fallo" && req.body?.reintentable === true && Number(post.robotFallos || 0) < MAX_REINTENTOS) {
+        // No llegó a pulsar «Publicar»: no ha salido nada, así que vuelve a la cola y el robot lo
+        // intenta en la siguiente pasada (cada 10 minutos).
+        post.robotFallos = Number(post.robotFallos || 0) + 1;
+        Object.assign(post, {
+          status: ROBOT_QUEUED,
+          lastError: `El robot del Mac lo intentó y no pudo (${String(req.body?.error || "sin detalle").slice(0, 300)}). Lo reintenta solo (${post.robotFallos} de ${MAX_REINTENTOS}).`,
+          robotDiagnostico: diagnostico(req.body?.diagnostico),
         });
       } else if (estado === "fallo") {
         Object.assign(post, {
+          robotDiagnostico: diagnostico(req.body?.diagnostico),
           status: "pending_confirmation",
           deliveryMode: "a mano",
           lastError: `El robot del Mac no pudo publicarlo (${String(req.body?.error || "sin detalle").slice(0, 300)}). Publícalo a mano y confírmalo aquí.`,
