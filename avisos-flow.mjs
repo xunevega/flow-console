@@ -6,7 +6,7 @@
 //   ideas          VISIBILIDAD tiene ideas nuevas.
 //   borradores     hay borradores esperando a que los revise.
 //   web            un enlace roto en aeternal-flow.es o en las páginas de sus productos (semanal).
-//   mibo / robot   MiBØ lleva más de un día sin mandar nada, o el robot del día 1 no ha pasado.
+//   robot         el robot del día 1 no ha pasado.
 //
 // Guarda en DATA_DIRECTORY/avisos-flow.json.
 
@@ -14,7 +14,6 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { instruccionVoz } from "./mivoz.mjs";
-import { contextoMibo } from "./desde-mibo.mjs";
 import { FICHAS_INICIALES } from "./visibilidad.mjs";
 
 let d = null;
@@ -35,8 +34,6 @@ export const BUSQUEDAS = {
   dataimporter: ["csv import", "csv importer", "spreadsheet import", "import excel to", "field mapping csv", "bulk upload csv"],
   renta: ["spanish tax return", "spain income tax"],
   "panel-cobros": ["freelancer invoicing tool", "invoice tracking freelancer", "simple invoicing app"],
-  mibo: ["personal ai assistant mac", "ai memory desktop", "macos automation assistant", "local ai assistant"],
-  "mibo-deck": ["phone as stream deck", "photoshop control panel", "blender macro pad", "phone as macro pad"],
   "el-mago": ["browser arcade game", "pixel art arcade"],
   "land-of-battle-kings": ["castle defense game godot", "tower defense godot"],
   "flow-console": ["post to all social networks", "hate social media creator", "social media scheduler self hosted"],
@@ -45,7 +42,7 @@ export const BUSQUEDAS = {
 async function leer() {
   try {
     const v = JSON.parse(await fs.readFile(archivo, "utf8"));
-    return { avisos: Array.isArray(v.avisos) ? v.avisos : [], estado: v.estado || {} };
+    return { avisos: Array.isArray(v.avisos) ? v.avisos.filter(a => a.tipo !== "mibo") : [], estado: v.estado || {} };
   } catch {
     return { avisos: [], estado: {} };
   }
@@ -291,7 +288,7 @@ export async function revisarWeb(v) {
   return { revisados: lista.length, rotos: rotos.length, nuevos };
 }
 
-// ───────────────────────── ideas, borradores, MiBØ y robot ─────────────────────────
+// ───────────────────────── ideas, borradores y robot ─────────────────────────
 
 export async function revisarEstado(v) {
   let vis = { ideas: {}, borradores: [] };
@@ -311,15 +308,6 @@ export async function revisarEstado(v) {
     poner(v, { clave: "borradores", tipo: "borradores", titulo: `${esperando.length} borrador${esperando.length > 1 ? "es" : ""} esperando tu repaso`, texto: esperando.slice(0, 4).map((b) => `· ${b.titulo}`).join("\n"), ir: "visibilidad" }, { actualizar: true });
   } else {
     cerrar(v, "borradores");
-  }
-  if (process.env.MIBO_FLOW_TOKEN) {
-    const c = await contextoMibo();
-    const horas = c.recibido ? (Date.now() - new Date(c.recibido).getTime()) / 3600000 : Infinity;
-    if (horas > 26) {
-      poner(v, { clave: "mibo-sin-enviar", tipo: "mibo", titulo: "MiBØ no manda nada desde hace más de un día", texto: c.recibido ? `Último envío: ${c.recibido.slice(0, 16).replace("T", " ")}. ¿Está encendido el Mac y MiBØ en marcha?` : "Todavía no ha mandado nada.", ir: "mivoz" }, { actualizar: true });
-    } else {
-      cerrar(v, "mibo-sin-enviar");
-    }
   }
   const hoy = new Date();
   const mes = hoy.toISOString().slice(0, 7);
