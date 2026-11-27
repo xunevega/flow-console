@@ -7879,15 +7879,15 @@ export default function App() {
       ) : view === "correct" ? (
         <RagCorrectConsole />
       ) : view === "inbox" ? (
-        <>
-          <main className="stats-workspace avf-envoltura"><div className="stats-shell vis"><AvisosFlow api={api} ir={navigate} /></div></main>
+        <main className="stats-workspace avf-envoltura">
+          <div className="stats-shell vis"><AvisosFlow api={api} ir={navigate} /></div>
           <Inbox
             refreshToken={inboxRefresh}
             selectedNoticeId={inboxSelectedNoticeId}
             selectedWorkflowId={inboxSelectedWorkflowId}
             initialPublicationMode={inboxPublicationMode}
           />
-        </>
+        </main>
       ) : view === "management" ? (
         <main className="workspace">
 	          <WorkflowList

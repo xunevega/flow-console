@@ -52,10 +52,20 @@ function Aviso({ a, api, recargar, ir }) {
             </details>
           )}
           {a.tipo === "conversacion" && (
-            <label>
-              Respuesta preparada {a.modo === "mencion_suave" ? `(menciona ${a.producto})` : "(sin mencionar nada tuyo)"} · la publicas tú
-              <textarea rows={7} value={respuesta} onChange={(e) => setRespuesta(e.target.value)} />
-            </label>
+            <div className="avf-respuesta">
+              <small className="avf-respuesta-titulo">
+                Respuesta preparada {a.modo === "mencion_suave" ? `(menciona ${a.producto})` : "(sin mencionar nada tuyo)"} · la publicas tú
+              </small>
+              {a.respuesta_es && <p className="avf-traduccion">{a.respuesta_es}</p>}
+              {a.respuesta_es ? (
+                <details className="avf-original">
+                  <summary>Respuesta original para publicar</summary>
+                  <textarea rows={7} value={respuesta} onChange={(e) => setRespuesta(e.target.value)} />
+                </details>
+              ) : (
+                <textarea rows={7} value={respuesta} onChange={(e) => setRespuesta(e.target.value)} />
+              )}
+            </div>
           )}
           <div className="vis-acciones">
             {a.url && <a className="button ghost" href={a.url} target="_blank" rel="noreferrer">{a.tipo === "web" ? "Abrir enlace" : "Abrir conversación"}</a>}

@@ -191,17 +191,19 @@ export async function buscarConversaciones(v) {
               ? `Al final, y solo si encaja, menciona ${f.nombre} en una frase diciendo que lo hizo él (sé transparente: «I built…» / «Lo hice yo…»), con su enlace ${f.demo || f.url}. Solo puedes afirmar esto del producto: ${f.hechos}`
               : "No menciones ningún producto ni enlace tuyo.",
             voz ? `\nSu manera de escribir (adáptala al idioma del foro):\n${voz}` : "",
-            'Responde solo JSON: {"respuesta": "la respuesta que publicaría en el foro, en su idioma", "cita_es": "traducción al español de las primeras 80 palabras de la cita original"}.',
+            'Responde solo JSON: {"respuesta": "la respuesta que publicaría en el foro, en su idioma", "respuesta_es": "esa misma respuesta traducida al español", "cita_es": "traducción al español de las primeras 80 palabras de la cita original"}.',
           ].join("\n"),
         },
         { role: "user", content: JSON.stringify({ titulo: c.titulo, texto: c.texto }) },
       ],
     });
     let escrita = "";
+    let escritaEs = "";
     let citaEs = "";
     try {
       const salida = jsonDelModelo(respuesta.text);
       escrita = texto(salida.respuesta, 3000);
+      escritaEs = texto(salida.respuesta_es, 3000);
       citaEs = texto(salida.cita_es, 700);
     } catch {
       escrita = texto(respuesta.text, 3000);
@@ -216,6 +218,7 @@ export async function buscarConversaciones(v) {
       cita: citaEs || c.texto.slice(0, 500),
       cita_original: c.texto.slice(0, 500),
       respuesta: escrita,
+      respuesta_es: escritaEs,
       producto: f?.nombre || "",
       modo: b.modo === "mencion_suave" ? "mencion_suave" : "ayuda",
       puntuacion: Number(b.puntuacion) || 0,

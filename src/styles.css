@@ -7622,7 +7622,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .vis-etiqueta { justify-self: start; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--purple); }
 
 /* ───── Avisos de Flow ───── */
-.avf-envoltura .stats-shell { padding-top: 28px; padding-bottom: 0; }
+.avf-envoltura .stats-shell { padding-top: 28px; padding-bottom: 26px; }
+/* La bandeja de n8n va debajo de los avisos, en la misma página: una sola barra de scroll. */
+.avf-envoltura .inbox-workspace { flex: none; min-height: 0; }
 .avf { display: grid; gap: 10px; }
 .avf h3 { margin: 0; display: flex; align-items: center; gap: 8px; }
 .avf-cuenta { background: var(--amber); color: #fff; border-radius: 999px; font-size: 12px; padding: 1px 8px; }
@@ -7639,6 +7641,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .avf-original { margin: 4px 0 10px; }
 .avf-original summary { cursor: pointer; color: var(--secondary); font-size: 12px; }
 .avf-original blockquote, .avf-original p { opacity: 0.75; }
+.avf-respuesta { display: grid; gap: 6px; }
+.avf-respuesta-titulo { color: var(--secondary); font-size: 12px; font-weight: 700; }
+.avf-traduccion { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.55; }
 .avf-cuerpo { display: grid; gap: 10px; padding: 0 14px 14px; }
 .avf-cuerpo pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; }
 .avf-cuerpo blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border-lit); color: var(--secondary); font-size: 13px; line-height: 1.5; }
