@@ -1400,6 +1400,11 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
 }
 .vis-lista p { font-size: 13px; line-height: 1.55; color: var(--ink-2); }
 .vis-lista small { grid-column: 1; color: var(--ink-3); font-size: 11px; }
+/* En las recomendaciones de VISIBILIDAD el <p> caía en la columna «auto» (la del botón) y
+   dejaba el título a cero: el texto se montaba. Todo el contenido va en la primera columna. */
+.vis-lista article > b,
+.vis-lista article > p,
+.vis-lista article > small { grid-column: 1; }
 .vis-lista .button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 .vis-etiqueta { justify-self: start; color: var(--warn); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; }
 .vis-versiones { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
