@@ -1110,7 +1110,7 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
 .instagram-history p { color: var(--ink-3); font-size: 12.5px; }
 
 /* ── 9. Avisos ─────────────────────────────────────────────────── */
-.stats-workspace.avf-envoltura { flex: 0 0 auto; overflow: visible; padding: 0; }
+.stats-workspace.avf-envoltura { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0; }
 .avf-envoltura .stats-shell,
 .avf-envoltura .stats-shell.vis { width: 100%; max-width: none; padding: 20px var(--space) 16px; }
 .avf { display: grid; gap: 12px; }
