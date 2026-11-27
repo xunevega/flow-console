@@ -7636,6 +7636,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .avf-aviso.web .avf-tipo, .avf-aviso.robot .avf-tipo, .avf-aviso.mibo .avf-tipo { color: var(--red); }
 .avf-aviso.ideas .avf-tipo, .avf-aviso.borradores .avf-tipo { color: var(--purple); }
 .avf-aviso.hecho, .avf-aviso.descartado { opacity: 0.6; }
+.avf-original { margin: 4px 0 10px; }
+.avf-original summary { cursor: pointer; color: var(--secondary); font-size: 12px; }
+.avf-original blockquote, .avf-original p { opacity: 0.75; }
 .avf-cuerpo { display: grid; gap: 10px; padding: 0 14px 14px; }
 .avf-cuerpo pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; }
 .avf-cuerpo blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border-lit); color: var(--secondary); font-size: 13px; line-height: 1.5; }

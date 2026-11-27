@@ -156,7 +156,7 @@ export async function buscarConversaciones(v) {
     messages: [
       {
         role: "system",
-        content: "Valoras conversaciones de foros para Roberto Díaz (Æternal Flow). Puntúa de 0 a 10 si merece la pena que Roberto conteste: 9-10 alguien pregunta justo lo que resuelve su producto; 7-8 puede aportar algo útil de verdad desde su experiencia; menos de 7 ruido, noticias, temas viejos o donde mencionar nada sería spam. «modo»: «mencion_suave» si su producto resuelve lo que se pregunta; «ayuda» si solo puede aportar conocimiento sin mencionar nada. Responde solo JSON: {\"valoraciones\": [{\"id\": \"...\", \"puntuacion\": 0, \"modo\": \"ayuda|mencion_suave\", \"porque\": \"una frase en español\"}]}.",
+        content: "Valoras conversaciones de foros para Roberto Díaz (Æternal Flow). Puntúa de 0 a 10 si merece la pena que Roberto conteste: 9-10 alguien pregunta justo lo que resuelve su producto; 7-8 puede aportar algo útil de verdad desde su experiencia; menos de 7 ruido, noticias, temas viejos o donde mencionar nada sería spam. «modo»: «mencion_suave» si su producto resuelve lo que se pregunta; «ayuda» si solo puede aportar conocimiento sin mencionar nada. Responde solo JSON: {\"valoraciones\": [{\"id\": \"...\", \"puntuacion\": 0, \"modo\": \"ayuda|mencion_suave\", \"titulo_es\": \"el título traducido al español de España, natural, sin comillas\", \"porque\": \"una frase en español\"}]}.",
       },
       { role: "user", content: JSON.stringify({ productos: porFicha, conversaciones: todos.map(({ id, sitio, titulo, texto: t, ficha }) => ({ id, sitio, titulo, texto: t.slice(0, 700), producto_buscado: ficha })) }) },
     ],
@@ -178,8 +178,9 @@ export async function buscarConversaciones(v) {
     const f = lista.find((x) => x.id === c.ficha);
     const respuesta = await d.openaiChat({
       model: d.openaiTextModel,
+      json: true,
       temperature: 0.5,
-      maxTokens: 700,
+      maxTokens: 900,
       messages: [
         {
           role: "system",
@@ -190,19 +191,31 @@ export async function buscarConversaciones(v) {
               ? `Al final, y solo si encaja, menciona ${f.nombre} en una frase diciendo que lo hizo él (sé transparente: «I built…» / «Lo hice yo…»), con su enlace ${f.demo || f.url}. Solo puedes afirmar esto del producto: ${f.hechos}`
               : "No menciones ningún producto ni enlace tuyo.",
             voz ? `\nSu manera de escribir (adáptala al idioma del foro):\n${voz}` : "",
+            'Responde solo JSON: {"respuesta": "la respuesta que publicaría en el foro, en su idioma", "cita_es": "traducción al español de las primeras 80 palabras de la cita original"}.',
           ].join("\n"),
         },
         { role: "user", content: JSON.stringify({ titulo: c.titulo, texto: c.texto }) },
       ],
     });
+    let escrita = "";
+    let citaEs = "";
+    try {
+      const salida = jsonDelModelo(respuesta.text);
+      escrita = texto(salida.respuesta, 3000);
+      citaEs = texto(salida.cita_es, 700);
+    } catch {
+      escrita = texto(respuesta.text, 3000);
+    }
     if (poner(v, {
       clave: `conversacion:${c.id}`,
       tipo: "conversacion",
-      titulo: c.titulo || "Conversación sin título",
+      titulo: texto(b.titulo_es, 300) || c.titulo || "Conversación sin título",
+      titulo_original: c.titulo,
       texto: `${c.sitio} · ${b.porque || ""}`.trim(),
       url: c.url,
-      cita: c.texto.slice(0, 500),
-      respuesta: texto(respuesta.text, 3000),
+      cita: citaEs || c.texto.slice(0, 500),
+      cita_original: c.texto.slice(0, 500),
+      respuesta: escrita,
       producto: f?.nombre || "",
       modo: b.modo === "mencion_suave" ? "mencion_suave" : "ayuda",
       puntuacion: Number(b.puntuacion) || 0,

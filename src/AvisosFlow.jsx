@@ -44,6 +44,13 @@ function Aviso({ a, api, recargar, ir }) {
         <div className="avf-cuerpo">
           {a.texto?.includes("\n") && <pre>{a.texto}</pre>}
           {a.cita && <blockquote>{a.cita}</blockquote>}
+          {(a.titulo_original || a.cita_original) && (
+            <details className="avf-original">
+              <summary>Ver original en inglés</summary>
+              {a.titulo_original && <p><b>{a.titulo_original}</b></p>}
+              {a.cita_original && <blockquote>{a.cita_original}</blockquote>}
+            </details>
+          )}
           {a.tipo === "conversacion" && (
             <label>
               Respuesta preparada {a.modo === "mencion_suave" ? `(menciona ${a.producto})` : "(sin mencionar nada tuyo)"} · la publicas tú
