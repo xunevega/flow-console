@@ -1585,4 +1585,5 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
 .avf-cuerpo .button { padding: 5px 0; }
 
 /* Las acciones de la barra también se pueden pulsar: 24 px de alto. */
-.app-shell .top-actions .button { padding: 5px 0; }
+.app-shell .top-actions .button,
+.app-shell .top-actions .button.ghost { padding: 5px 0; }
