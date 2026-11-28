@@ -1501,3 +1501,62 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
   .preflight-grid { grid-template-columns: minmax(0, 1fr); }
   .est-tarjetas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ── 10. Un color por apartado ───────────────────────────────────
+   El papel y la tinta siguen mandando; el color solo dice en qué
+   sección estás y de qué tipo es cada aviso. Siete colores, todos
+   por encima de 5:1 sobre el fondo, y nada más. */
+:root {
+  --sec-calendario: #b03a15;
+  --sec-libreta: #8a5806;
+  --sec-mivoz: #56622a;
+  --sec-publicaciones: #0e5147;
+  --sec-avisos: #2f5d7c;
+  --sec-estadisticas: #5f4569;
+  --sec-visibilidad: #8a3450;
+}
+
+.app-shell[data-view="calendar"] { --sec: var(--sec-calendario); }
+.app-shell[data-view="notebook"] { --sec: var(--sec-libreta); }
+.app-shell[data-view="mivoz"] { --sec: var(--sec-mivoz); }
+.app-shell[data-view="instagram"] { --sec: var(--sec-publicaciones); }
+.app-shell[data-view="inbox"] { --sec: var(--sec-avisos); }
+.app-shell[data-view="stats"] { --sec: var(--sec-estadisticas); }
+.app-shell[data-view="visibilidad"] { --sec: var(--sec-visibilidad); }
+
+.topbar nav button[data-sec="calendario"] { --sec: var(--sec-calendario); }
+.topbar nav button[data-sec="libreta"] { --sec: var(--sec-libreta); }
+.topbar nav button[data-sec="mivoz"] { --sec: var(--sec-mivoz); }
+.topbar nav button[data-sec="publicaciones"] { --sec: var(--sec-publicaciones); }
+.topbar nav button[data-sec="avisos"] { --sec: var(--sec-avisos); }
+.topbar nav button[data-sec="estadisticas"] { --sec: var(--sec-estadisticas); }
+.topbar nav button[data-sec="visibilidad"] { --sec: var(--sec-visibilidad); }
+
+/* La marca y la pestaña activa dicen dónde estás. */
+.app-shell .brand::before { background: var(--sec, var(--ink-1)); }
+.app-shell .topbar nav button.active {
+  color: var(--sec, var(--ink-1));
+  border-bottom-color: var(--sec, var(--accent));
+}
+/* El filete del epígrafe de cada página. */
+.app-shell .eyebrow::before { background: var(--sec, var(--accent)); }
+
+/* Cada tipo de aviso, con su color: conversación, ideas, web… */
+.avf-aviso.conversacion { --tipo: var(--sec-avisos); }
+.avf-aviso.ideas, .avf-aviso.borradores { --tipo: var(--sec-libreta); }
+.avf-aviso.web, .avf-aviso.robot, .avf-aviso.mibo { --tipo: var(--bad); }
+.avf-aviso.suscriptor { --tipo: var(--sec-publicaciones); }
+.avf-aviso .avf-tipo {
+  color: var(--tipo, var(--ink-2));
+  border-color: color-mix(in srgb, var(--tipo, var(--ink-3)) 48%, transparent);
+  background: color-mix(in srgb, var(--tipo, transparent) 9%, transparent);
+}
+.avf h3::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--sec-avisos);
+}
+.avf-cuenta { color: var(--sec-avisos); }

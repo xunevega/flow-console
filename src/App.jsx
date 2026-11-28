@@ -7792,7 +7792,7 @@ export default function App() {
   const selected = workflows.find((workflow) => workflow.id === selectedId) || null;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-view={view}>
       {groupModal !== undefined && (
         <GroupModal
           group={groupModal || null}
@@ -7809,24 +7809,28 @@ export default function App() {
         <nav>
           <button
             className={view === "calendar" ? "active" : ""}
+            data-sec="calendario"
             onClick={() => navigate("calendar")}
           >
             CALENDARIO
           </button>
           <button
             className={view === "notebook" ? "active" : ""}
+            data-sec="libreta"
             onClick={() => navigate("notebook")}
           >
             LIBRETA
           </button>
           <button
             className={view === "mivoz" ? "active" : ""}
+            data-sec="mivoz"
             onClick={() => navigate("mivoz")}
           >
             MI VOZ
           </button>
           <button
             className={view === "instagram" ? "active" : ""}
+            data-sec="publicaciones"
             onClick={() => {
               setPublicationForumContext({ workflowId: "", noticeId: "", publicationMode: false });
               navigate("instagram");
@@ -7836,18 +7840,21 @@ export default function App() {
           </button>
           <button
             className={view === "inbox" ? "active" : ""}
+            data-sec="avisos"
             onClick={() => openInbox()}
           >
             AVISOS
           </button>
           <button
             className={view === "stats" ? "active" : ""}
+            data-sec="estadisticas"
             onClick={() => navigate("stats")}
           >
             ESTADÍSTICAS
           </button>
           <button
             className={view === "visibilidad" ? "active" : ""}
+            data-sec="visibilidad"
             onClick={() => navigate("visibilidad")}
           >
             VISIBILIDAD
