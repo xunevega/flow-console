@@ -1575,3 +1575,9 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
   border-bottom-color: transparent;
   box-shadow: inset 0 -2px 0 0 var(--sec, var(--accent));
 }
+
+/* Detalles del aviso: el desplegable se puede pulsar (24 px) y el texto
+   no cruza la página entera, que se lee mal por encima de 75 caracteres. */
+.avf-original summary { padding: 5px 0; }
+.avf-cuerpo p,
+.avf-cuerpo blockquote { max-width: 72ch; }
