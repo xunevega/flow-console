@@ -1546,7 +1546,13 @@ td { padding: 12px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2
 .avf-aviso.ideas, .avf-aviso.borradores { --tipo: var(--sec-libreta); }
 .avf-aviso.web, .avf-aviso.robot, .avf-aviso.mibo { --tipo: var(--bad); }
 .avf-aviso.suscriptor { --tipo: var(--sec-publicaciones); }
-.avf-aviso .avf-tipo {
+.avf-aviso.conversacion .avf-tipo,
+.avf-aviso.ideas .avf-tipo,
+.avf-aviso.borradores .avf-tipo,
+.avf-aviso.web .avf-tipo,
+.avf-aviso.robot .avf-tipo,
+.avf-aviso.mibo .avf-tipo,
+.avf-aviso.suscriptor .avf-tipo {
   color: var(--tipo, var(--ink-2));
   border-color: color-mix(in srgb, var(--tipo, var(--ink-3)) 48%, transparent);
   background: color-mix(in srgb, var(--tipo, transparent) 9%, transparent);
